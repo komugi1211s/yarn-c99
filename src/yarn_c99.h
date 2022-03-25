@@ -1,21 +1,50 @@
+/*
+ ==========================================
+ Yarn C99 runtime v0.0
+ Compatible with Yarn Spinner 2.0 or above.
+
+ follow prerequisite, getting started, then usage section.
+
+ prerequisite:
+   requires protobuf-c (for now), and protoc output of yarn_spinner.proto.
+
+ getting started:
+    install protobuf-c:
+      follow protobuf-c tutorials to use protobuf.
+
+    to create implementation:
+      1. requires:
+        "yarn_spinner.pb-c.h"
+        
+      to be included before you create implementation.
+
+      2. after that, insert this define in "EXACTLY ONE" c/cpp file (translation unit) before including this file.
+
+        #define YARN_C99_IMPLEMENTATION
+
+      to create implementation for this library.
+
+      full example below:
+        #include "yarn_spinner.pb-c.h" // To create protobuf binding
+
+        #define YARN_C99_IMPLEMENTATION // to activate implementation
+        #include "yarn_c99.h" // now you can use yarn c99 functions.
+
+  usage:
+    TODO
+*/
 
 #if !defined(YARN_C99_INCLUDE)
 #define YARN_C99_INCLUDE
 
-#include "protobuf-c.c"
-#include "yarn_spinner.pb-c.h"
-#include "yarn_spinner.pb-c.c"
+// #include "protobuf-c.c"
+// #include "yarn_spinner.pb-c.h"
+// #include "yarn_spinner.pb-c.c"
 
-/* code above includes:
- *  stddef.h
- *  stdint.h
- *  limits.h
- *  assert.h
- *
- *  protobuf automatically includes crt stuff.
- *  probably difficult to go crt free.
- * */
-
+#include <stdint.h>
+#include <assert.h>
+#include <string.h> /* for strncmp, memset */
+#include <stdio.h>  /* TODO: cleanup. basically here for printf debugging */
 
 /*
  * TODO: cleanup
@@ -24,24 +53,24 @@
  * TODO: assert crusade (some error should be reported to game, instead of crashing outright)
  * */
 
-#include <stdio.h>
-
 #if !defined(YARN_C99_DEF)
-#if defined(YARN_C99_STATIC)
-#define YARN_C99_DEF static
-#else
-#define YARN_C99_DEF extern
-#endif
+  #if defined(YARN_C99_STATIC)
+    #define YARN_C99_DEF static
+  #else
+    #if defined(__cplusplus)
+      #define YARN_C99_DEF extern "C"
+    #else
+      #define YARN_C99_DEF extern
+    #endif
+  #endif
 #endif
 
 #define YARN_CONCAT1(a, b) a##b
 #define YARN_CONCAT(a, b) YARN_CONCAT1(a, b)
-#define yarn_len(n) (sizeof(n)/(sizeof(0[n])))
+#define YARN_LEN(n) (sizeof(n)/(sizeof(0[n])))
 
 #define YARN_STATIC_ASSERT(cond) \
-  enum { YARN_CONCAT(yarnStaticAssert, __LINE__) = \
-  sizeof(struct { int assertion_failed[(cond) ? 1 : -1]; }) }
-
+    typedef char YARN_CONCAT(yarn_static_assert, __LINE__)[cond];
 
 #if !defined(yarn_malloc) || !defined(yarn_free) || !defined(yarn_realloc)
   #if !defined(yarn_malloc) && !defined(yarn_free) && !defined(yarn_realloc)
@@ -53,6 +82,13 @@
     #error "you must define all yarn_{malloc,free,realloc} macro if you're going to define one of them."
   #endif
 #endif
+
+
+typedef struct Yarn__Program Yarn__Program;
+struct Yarn__Program;
+
+typedef struct Yarn__Instruction Yarn__Instruction;
+struct Yarn__Instruction;
 
 typedef struct yarn_ctx yarn_ctx;
 
@@ -171,7 +207,7 @@ typedef enum {
 #define YARN_STACK_CAPACITY 256
 
 struct yarn_ctx {
-    ProtobufCAllocator *program_allocator;
+    // ProtobufCAllocator *program_allocator;
     Yarn__Program      *program;
     yarn_string_repo    strings;
     yarn_exec_state     execution_state;
@@ -274,7 +310,13 @@ YARN_C99_DEF int yarn__find_instruction_point_for_label(yarn_ctx *ctx, char *lab
 
 #endif
 
-#if defined(YARN_C99_IMPLEMENTED) && !defined(YARN_C99_INPLEMENT_COMPLETE)
+/*
+ * ==================================================================
+ * Implementations.
+ * ==================================================================
+ * */
+
+#if defined(YARN_C99_IMPLEMENTATION) && !defined(YARN_C99_INPLEMENT_COMPLETE)
 #define YARN_C99_INPLEMENT_COMPLETE
 
 int yarn_set_callbacks(yarn_ctx *ctx, yarn_delegates delegates) {
@@ -380,7 +422,7 @@ yarn_value yarn_pop_value(yarn_ctx *ctx) {
 }
 
 void yarn_push_value(yarn_ctx *ctx, yarn_value value) {
-    assert(ctx->stack_ptr < yarn_len(ctx->stack));
+    assert(ctx->stack_ptr < YARN_LEN(ctx->stack));
     ctx->stack[ctx->stack_ptr++] = value;
 }
 
@@ -471,7 +513,6 @@ int yarn_continue(yarn_ctx *ctx) {
 
 yarn_ctx *yarn_create_context_heap() {
     yarn_ctx *ctx = yarn_malloc(sizeof(yarn_ctx));
-    ctx->program_allocator = 0;
     ctx->program           = 0;
 
     ctx->strings.used     = 0;
@@ -542,11 +583,11 @@ int yarn_load_program(
     size_t string_table_length)
 {
     if(ctx->program != 0) {
-        yarn__program__free_unpacked(ctx->program, ctx->program_allocator);
+        yarn__program__free_unpacked(ctx->program, 0); /* TODO: @allocator */
     }
 
     ctx->program = yarn__program__unpack(
-        ctx->program_allocator,
+        0, /* TODO: @allocator */
         program_length,
         program_buffer);
 
@@ -557,7 +598,7 @@ int yarn_load_program(
 
 void yarn_destroy_context(yarn_ctx *ctx) {
     if (ctx->program)
-        yarn__program__free_unpacked(ctx->program, ctx->program_allocator);
+        yarn__program__free_unpacked(ctx->program, 0); /* TODO: @allocator */
 
     for(size_t i = 0; i < sizeof(ctx->strings.used); ++i) {
         yarn_free(ctx->strings.entries[i].id);
@@ -973,7 +1014,7 @@ int yarn__load_string_table(yarn_ctx *ctx, void *string_table_buffer, size_t str
                     char *current_ptr = &begin[current];
 
                     if (parsing_first_line) {
-                        assert(column_size < yarn_len(expect_column));
+                        assert(column_size < YARN_LEN(expect_column));
                         const yarn__expect_csv_column *expect = &expect_column[column_size];
 
                         /* TODO: handle more gracefully. */

@@ -1,5 +1,8 @@
 
-#define YARN_C99_IMPLEMENTED
+#define YARN_C99_IMPLEMENTATION
+#include "protobuf-c.c"
+#include "yarn_spinner.pb-c.h"
+#include "yarn_spinner.pb-c.c"
 #include "yarn_c99.h"
 
 #include <stdlib.h>
