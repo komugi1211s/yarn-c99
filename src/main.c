@@ -8,6 +8,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+
+struct Entity {
+    int commands;
+};
+
+
 char *read_entire_file(char *file_name, size_t *bytes_read) {
     assert(file_name && bytes_read);
     FILE *fp = 0;

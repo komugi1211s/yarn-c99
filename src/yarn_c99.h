@@ -126,6 +126,7 @@ typedef void (*yarn_command_handler_func)(yarn_ctx *ctx, yarn_command *command);
 typedef void (*yarn_node_start_handler_func)(yarn_ctx *ctx, char *node_name);
 typedef void (*yarn_node_complete_handler_func)(yarn_ctx *ctx, char *node_name);
 typedef void (*yarn_dialogue_complete_handler_func)(yarn_ctx *ctx, char *dialogue_name);
+typedef void (*yarn_prepare_for_lines_handler_func)(yarn_ctx *ctx, char **ids, int ids_count);
 #endif
 
 typedef struct {
@@ -136,6 +137,7 @@ typedef struct {
     yarn_node_start_handler_func node_start_handler;
     yarn_node_complete_handler_func node_complete_handler;
     yarn_dialogue_complete_handler_func dialog_complete_handler;
+    yarn_prepare_for_lines_handler_func prepare_for_lines_handler;
 #endif
 } yarn_delegates;
 
@@ -308,6 +310,10 @@ YARN_C99_DEF void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst);
  */
 YARN_C99_DEF int yarn__find_instruction_point_for_label(yarn_ctx *ctx, char *label);
 
+/*
+ * Resets the state of the context.
+ */
+YARN_C99_DEF void yarn__reset_state(yarn_ctx *ctx);
 #endif
 
 /*
@@ -503,12 +509,64 @@ int yarn_continue(yarn_ctx *ctx) {
         if (ctx->current_instruction >= node->n_instructions) {
             /* ctx->delegates.node_complete_handler(ctx, node->name);  */
             ctx->execution_state = YARN_EXEC_STOPPED;
+            yarn__reset_state(ctx); /* original version has a setter that resets VM state when operation stops. */
+
             /* ctx->delegates.dialog_complete_handler(ctx);  */
             /* TODO: log message */
         }
     }
 
     return 0;
+}
+
+int yarn_set_node(yarn_ctx *ctx, char *node_name) {
+    assert(ctx->program && ctx->program->n_nodes > 0);
+
+    size_t length = strlen(node_name);
+    int index = -1;
+    
+    Yarn__Node *node = 0;
+    for (int i = 0; i < ctx->program->n_nodes; ++i) {
+        if (strncmp(ctx->program->nodes[i]->key, node_name, length) == 0) {
+            index = i;
+            node = ctx->program->nodes[i]->value;
+            break;
+        }
+    }
+
+    if (index == -1) {
+        printf("No node named %s has been loaded.", node_name);
+        assert(0);
+    }
+
+    printf("Running node: %s", node_name);
+    yarn__reset_state(ctx);
+
+    ctx->current_node = index;
+
+#if 0
+    if (ctx->delegates.node_start_handler) {
+        ctx->delegates.node_start_handler(ctx, node_name);
+
+        if (ctx->prepare_for_lines_handler) {
+            char **ids = yarn_malloc(sizeof(void *) * node->n_instructions);
+            int n_ids = 0;
+            for (int i = 0; i < node->n_instructions; ++i) {
+                Yarn__Instruction *inst = node->instructions[i];
+                if(inst->opcode == YARN__INSTRUCTION__OP_CODE__RUN_LINE ||
+                   inst->opcode == YARN__INSTRUCTION__OP_CODE__ADD_OPTION)
+                {
+                    ids[n_ids++] = inst->operands[0]->string_value;
+                }
+            
+            }
+            ctx->prepare_for_lines_handler(ctx, ids, n_ids);
+            yarn_free(ids);
+        }
+    }
+#endif
+
+    return ctx->current_node;
 }
 
 yarn_ctx *yarn_create_context_heap() {
@@ -707,6 +765,12 @@ yarn_functions yarn__standard_libs[] = {
  * Yarn VM functions.
  */
 
+void yarn__reset_state(yarn_ctx *ctx) {
+    ctx->stack_ptr = 0;
+    ctx->current_instruction = 0;
+    ctx->current_node = 0;
+}
+
 int yarn__find_instruction_point_for_label(yarn_ctx *ctx, char *label) {
     Yarn__Node *node = ctx->program->nodes[ctx->current_node]->value;
     size_t strlength = strlen(label);
@@ -787,12 +851,37 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
             ctx->execution_state = YARN_EXEC_STOPPED;
         } break;
 
-        YARN_UNHANDLED_OPCODE(YARN__INSTRUCTION__OP_CODE__RUN_NODE)
-        case YARN__INSTRUCTION__OP_CODE__POP: yarn_pop_value(ctx); break;
+        case YARN__INSTRUCTION__OP_CODE__RUN_NODE:
+        {
+            yarn_value value = yarn_pop_value(ctx);
+            char *node_name = yarn_value_as_string(value);
+            #if 0
+            ctx->delegates.node_complete_handler(ctx);
+            #endif
+        
+            yarn_set_node(ctx, node_name);
+            ctx->current_instruction -= 1;
+        } break;
 
-        YARN_UNHANDLED_OPCODE(YARN__INSTRUCTION__OP_CODE__PUSH_NULL)
+        case YARN__INSTRUCTION__OP_CODE__POP:
+        {
+            yarn_pop_value(ctx);
+        } break;
+
+        case YARN__INSTRUCTION__OP_CODE__PUSH_NULL:
+        {
+            assert(0 && "Yarn Push NULL opcode is deprecated.");
+        } break;
+
         YARN_UNHANDLED_OPCODE(YARN__INSTRUCTION__OP_CODE__RUN_COMMAND)
-        YARN_UNHANDLED_OPCODE(YARN__INSTRUCTION__OP_CODE__JUMP)
+
+        case YARN__INSTRUCTION__OP_CODE__JUMP:
+        {
+            assert(ctx->stack[ctx->stack_ptr - 1].type == YARN_VALUE_STRING);
+
+            char *label = ctx->stack[ctx->stack_ptr - 1].values.v_string;
+            ctx->current_instruction = yarn__find_instruction_point_for_label(ctx, label) - 1;
+        } break;
 
         case YARN__INSTRUCTION__OP_CODE__JUMP_IF_FALSE:
         {
@@ -813,6 +902,7 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
 
         YARN_UNHANDLED_OPCODE(YARN__INSTRUCTION__OP_CODE__ADD_OPTION)
         YARN_UNHANDLED_OPCODE(YARN__INSTRUCTION__OP_CODE__SHOW_OPTIONS)
+
         case YARN__INSTRUCTION__OP_CODE__RUN_LINE:
         {
             yarn_line line = { 0 };

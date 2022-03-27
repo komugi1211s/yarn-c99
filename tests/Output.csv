@@ -1,7 +1,0 @@
-id,text,file,node,lineNumber
-line:/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn-Start-0,whoa what here's some text,/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn,Start,3
-line:/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn-Start-1,this should appear :),/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn,Start,7
-line:/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn-Start-2,NESTED IF BLOCK WHAAAT,/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn,Start,9
-line:/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn-Start-3,oh noooo it didn't work :(,/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn,Start,13
-line:/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn-Start-4,haha nice now 'set' works even when deeply nested,/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn,Start,17
-line:/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn-Start-5,aaargh :(,/home/user/Documents/csharp_project/YarnSpinnerBin/Basic.yarn,Start,19

@@ -1,0 +1,7 @@
+id,text,file,node,lineNumber
+line:W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn-Start-0,whoa what here's some text,W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn,Start,3
+line:W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn-Start-1,this should appear :),W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn,Start,7
+line:W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn-Start-2,NESTED IF BLOCK WHAAAT,W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn,Start,9
+line:W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn-Start-3,oh noooo it didn't work :(,W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn,Start,13
+line:W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn-Start-4,haha nice now 'set' works even when deeply nested,W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn,Start,17
+line:W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn-Start-5,aaargh :(,W:\CppProject\yarn-c99\tests\yarn-files\Basic.yarn,Start,19

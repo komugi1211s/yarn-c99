@@ -1,0 +1,6 @@
+id,text,file,node,lineNumber
+line:W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn-EmptyTags-0,"In this test, the 'tags' header is provided, but has no value.",W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn,EmptyTags,5
+line:W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn-Tags-1,"In this test, the 'tags' header is provided, and has three values.",W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn,Tags,10
+line:W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn-ArbitraryHeaderWithValue-2,"In this test, an arbitrary header is defined with some text.",W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn,ArbitraryHeaderWithValue,15
+line:W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn-ArbitraryHeaderWithValue-3,"(TODO: If the last header is an arbitrary header, and is empty, a parse error is thrown. This is a bug.)",W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn,ArbitraryHeaderWithValue,17
+line:W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn-Comments-4,This node demonstrates the use of comments in node headers.,W:\CppProject\yarn-c99\tests\yarn-files\Headers.yarn,Comments,23

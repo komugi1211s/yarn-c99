@@ -1,0 +1,3 @@
+id,text,file,node,lineNumber
+line:W:\CppProject\yarn-c99\tests\yarn-files\Strings.yarn-Start-0,"SUCCESS: Node ""Start"" was visited!",W:\CppProject\yarn-c99\tests\yarn-files\Strings.yarn,Start,12
+line:W:\CppProject\yarn-c99\tests\yarn-files\Strings.yarn-Start-1,"SUCCESS: Node ""DoesNotExist"" does not exist",W:\CppProject\yarn-c99\tests\yarn-files\Strings.yarn,Start,16
