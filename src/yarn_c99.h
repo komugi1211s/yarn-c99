@@ -15,7 +15,7 @@
     to create implementation:
       1. requires:
         "yarn_spinner.pb-c.h"
-        
+
       to be included before you create implementation.
 
       2. after that, insert this define in "EXACTLY ONE" c/cpp file (translation unit) before including this file.
@@ -70,7 +70,7 @@
 #define YARN_LEN(n) (sizeof(n)/(sizeof(0[n])))
 
 #define YARN_STATIC_ASSERT(cond) \
-    typedef char YARN_CONCAT(yarn_static_assert, __LINE__)[cond];
+    typedef char YARN_CONCAT(yarn_static_assert_line_, __LINE__)[(cond) ? 1 : -1];
 
 #if !defined(yarn_malloc) || !defined(yarn_free) || !defined(yarn_realloc)
   #if !defined(yarn_malloc) && !defined(yarn_free) && !defined(yarn_realloc)
@@ -83,11 +83,10 @@
   #endif
 #endif
 
-
-typedef struct Yarn__Program Yarn__Program;
+/* typedef struct Yarn__Program Yarn__Program; */
 struct Yarn__Program;
 
-typedef struct Yarn__Instruction Yarn__Instruction;
+/* typedef struct Yarn__Instruction Yarn__Instruction; */
 struct Yarn__Instruction;
 
 typedef struct yarn_ctx yarn_ctx;
@@ -119,27 +118,47 @@ typedef struct {
     char **substitutions; /* TODO: @interning fragmentation disaster */
 } yarn_line;
 
-typedef void (*yarn_line_handler_func)(yarn_ctx *ctx, yarn_line *line);
-#if 0
-typedef void (*yarn_option_handler_func)(yarn_ctx *ctx, yarn_option_set *option_set);
-typedef void (*yarn_command_handler_func)(yarn_ctx *ctx, yarn_command *command);
-typedef void (*yarn_node_start_handler_func)(yarn_ctx *ctx, char *node_name);
-typedef void (*yarn_node_complete_handler_func)(yarn_ctx *ctx, char *node_name);
-typedef void (*yarn_dialogue_complete_handler_func)(yarn_ctx *ctx, char *dialogue_name);
-typedef void (*yarn_prepare_for_lines_handler_func)(yarn_ctx *ctx, char **ids, int ids_count);
-#endif
+typedef struct {
+    yarn_line line;
+    int id;
+    char *destination_node;
+    int is_available; /* 1 = true, 0 = false */
+} yarn_option;
 
 typedef struct {
-    yarn_line_handler_func line_handler;
-#if 0
-    yarn_option_handler_func option_handler;
-    yarn_command_handler_func command_handler;
-    yarn_node_start_handler_func node_start_handler;
-    yarn_node_complete_handler_func node_complete_handler;
-    yarn_dialogue_complete_handler_func dialog_complete_handler;
-    yarn_prepare_for_lines_handler_func prepare_for_lines_handler;
+    size_t capacity;
+    size_t used;
+    yarn_option *entries;
+} yarn_option_set;
+
+typedef void (*yarn_line_handler_func)(yarn_ctx *ctx, yarn_line *line);
+typedef void (*yarn_option_handler_func)(yarn_ctx *ctx, yarn_option_set *option_set);
+#if 0 /* TODO */
+typedef void (*yarn_command_handler_func)(yarn_ctx *ctx, yarn_command *command);
 #endif
+typedef void (*yarn_node_start_handler_func)(yarn_ctx *ctx);
+typedef void (*yarn_node_complete_handler_func)(yarn_ctx *ctx);
+typedef void (*yarn_dialogue_complete_handler_func)(yarn_ctx *ctx);
+typedef void (*yarn_prepare_for_lines_handler_func)(yarn_ctx *ctx, char **ids, int ids_count);
+
+typedef struct {
+    yarn_line_handler_func              line_handler;
+    yarn_option_handler_func            option_handler;
+#if 0
+    yarn_command_handler_func           command_handler;
+#endif
+    yarn_node_start_handler_func        node_start_handler;
+    yarn_node_complete_handler_func     node_complete_handler;
+    yarn_dialogue_complete_handler_func dialogue_complete_handler;
+    yarn_prepare_for_lines_handler_func prepare_for_lines_handler;
 } yarn_delegates;
+
+/*
+    TODO:
+    reset this part each time you implement delegate.
+*/
+YARN_STATIC_ASSERT(sizeof(yarn_delegates) == (sizeof(void *) * 6));
+
 
 /* stub delegates.
  * TODO: move it to somewhere else!
@@ -326,12 +345,6 @@ YARN_C99_DEF void yarn__reset_state(yarn_ctx *ctx);
 #define YARN_C99_INPLEMENT_COMPLETE
 
 int yarn_set_callbacks(yarn_ctx *ctx, yarn_delegates delegates) {
-    /*
-        TODO:
-        reset this part each time you implement delegate.
-    */
-    YARN_STATIC_ASSERT(sizeof(delegates) == sizeof(void *));
-
     if (!delegates.line_handler) return 0;
 
     ctx->delegates = delegates;
@@ -524,7 +537,7 @@ int yarn_set_node(yarn_ctx *ctx, char *node_name) {
 
     size_t length = strlen(node_name);
     int index = -1;
-    
+
     Yarn__Node *node = 0;
     for (int i = 0; i < ctx->program->n_nodes; ++i) {
         if (strncmp(ctx->program->nodes[i]->key, node_name, length) == 0) {
@@ -544,11 +557,10 @@ int yarn_set_node(yarn_ctx *ctx, char *node_name) {
 
     ctx->current_node = index;
 
-#if 0
     if (ctx->delegates.node_start_handler) {
-        ctx->delegates.node_start_handler(ctx, node_name);
+        ctx->delegates.node_start_handler(ctx);
 
-        if (ctx->prepare_for_lines_handler) {
+        if (ctx->delegates.prepare_for_lines_handler) {
             char **ids = yarn_malloc(sizeof(void *) * node->n_instructions);
             int n_ids = 0;
             for (int i = 0; i < node->n_instructions; ++i) {
@@ -558,13 +570,12 @@ int yarn_set_node(yarn_ctx *ctx, char *node_name) {
                 {
                     ids[n_ids++] = inst->operands[0]->string_value;
                 }
-            
+ 
             }
-            ctx->prepare_for_lines_handler(ctx, ids, n_ids);
+            ctx->delegates.prepare_for_lines_handler(ctx, ids, n_ids);
             yarn_free(ids);
         }
     }
-#endif
 
     return ctx->current_node;
 }
@@ -581,7 +592,7 @@ yarn_ctx *yarn_create_context_heap() {
     memset(ctx->strings.entries, 0, sizeof(yarn_string_line) * 512);
 
     ctx->execution_state = YARN_EXEC_STOPPED;
-    ctx->delegates.line_handler = stub_yarn_line_handler;
+    ctx->delegates.line_handler = &stub_yarn_line_handler;
 
     ctx->stack_ptr = 0;
     memset(ctx->stack, 0, sizeof(yarn_value) * YARN_STACK_CAPACITY);
@@ -843,10 +854,8 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
 
         case YARN__INSTRUCTION__OP_CODE__STOP:
         {
-#if 0
             ctx->delegates.node_complete_handler(ctx);
             ctx->delegates.dialogue_complete_handler(ctx);
-#endif
 
             ctx->execution_state = YARN_EXEC_STOPPED;
         } break;
@@ -855,10 +864,8 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
         {
             yarn_value value = yarn_pop_value(ctx);
             char *node_name = yarn_value_as_string(value);
-            #if 0
             ctx->delegates.node_complete_handler(ctx);
-            #endif
-        
+
             yarn_set_node(ctx, node_name);
             ctx->current_instruction -= 1;
         } break;
