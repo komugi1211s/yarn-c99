@@ -1,19 +1,13 @@
+1. fix CSV parsing
+    1.1. ignore first and last double quotation
+    "abc" -> abc
 
-1. create ADD_OPTIONS
-    line substitution again!
-    matches with show_options. need to create option struct.
+    1.2. replace "" with "
+    "hello, friend ""foobar""" -> hello, friend "foobar"
 
-2. create SHOW_OPTIONS
-    todo. look through what must be done.
+2. fix weird linebreak problem
+    some RUN_LINE automatically inserts line break, some doesn't.
+    after SHOW_OPTION will ignore line-break for some reason.
 
-3. create RUN_COMMAND
-    substituting must be implemented without too much allocation
-        replace:
-            text: hello, this is {0}! are you a {1}?
-            operand: foo, bar
-
-        to:
-            text: hello, this is foo! are you a bar?
-
-4. fix CSV parsing
-    simple double-quotated sentence breaks parsing. how could I do this?
+3. automatic skipping problem
+    after selecting an option, next RUN_LINE call fails to wait for getchar.

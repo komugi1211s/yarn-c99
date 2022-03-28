@@ -47,9 +47,56 @@ void yarn_handle_line(yarn_ctx *ctx, yarn_line *line) {
         }
     }
 
-    printf("%s", message);
+    printf("%s\n", message);
     getchar();
+    yarn_continue(ctx);
+}
 
+void yarn_handle_option(yarn_ctx *ctx, yarn_option *options, int option_count) {
+    int max_option_id = -1;
+    for (int o = 0; o < option_count; ++o) {
+        yarn_option *opt = &options[o];
+
+        size_t id_size = strlen(opt->line.id);
+        char *message_for_id = 0;
+
+        for (int i = 0; i < ctx->strings.used; ++i) {
+            if (strncmp(ctx->strings.entries[i].id, opt->line.id, id_size) == 0) {
+                message_for_id = ctx->strings.entries[i].text;
+                break;
+            }
+        }
+
+        printf("%d: %s\n", options[o].id, message_for_id);
+    }
+
+    yarn_option *chosen = 0;
+    for (;;) {
+        int a = getchar() - '0';
+        printf("chosen: %d\n", a);
+
+        if (a < 0 || a > 10) {
+            printf("That char is unselectable\n");
+            continue;
+        }
+
+        for (int i = 0; i < option_count; ++i) {
+            yarn_option *opt = &options[i];
+            if (opt->id == a) {
+                chosen = opt;
+                break;
+            }
+        }
+
+        if (chosen) {
+            yarn_select_option(ctx, a);
+            break;
+        }
+    }
+}
+
+void yarn_handle_command(yarn_ctx *ctx, char *cmd) {
+    printf("Command fired: %s\n", cmd);
     yarn_continue(ctx);
 }
 
@@ -65,7 +112,9 @@ int main(int argc, char **argv) {
     char *strtable = read_entire_file(csv, &strtable_size);
     yarn_load_program(ctx, yarn_c, yarnc_size, strtable, strtable_size);
 
-    ctx->delegates.line_handler = yarn_handle_line;
+    ctx->delegates.line_handler    = yarn_handle_line;
+    ctx->delegates.option_handler  = yarn_handle_option;
+    ctx->delegates.command_handler = yarn_handle_command;
     yarn_continue(ctx);
 
     free(yarn_c);
