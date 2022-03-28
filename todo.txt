@@ -1,13 +1,6 @@
-1. fix CSV parsing
-    1.1. ignore first and last double quotation
-    "abc" -> abc
-
-    1.2. replace "" with "
-    "hello, friend ""foobar""" -> hello, friend "foobar"
-
-2. fix weird linebreak problem
+1. fix weird linebreak problem
     some RUN_LINE automatically inserts line break, some doesn't.
     after SHOW_OPTION will ignore line-break for some reason.
 
-3. automatic skipping problem
+2. automatic skipping problem
     after selecting an option, next RUN_LINE call fails to wait for getchar.

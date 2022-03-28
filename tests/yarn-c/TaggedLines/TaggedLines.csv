@@ -1,5 +1,5 @@
 id,text,file,node,lineNumber
-line:test1,Test line 1,W:\CppProject\yarn-c99\tests\yarn-files\TaggedLines.yarn,Start,3
-line:test2,Test line 2,W:\CppProject\yarn-c99\tests\yarn-files\TaggedLines.yarn,Start,4
-line:test3,Test line 3,W:\CppProject\yarn-c99\tests\yarn-files\TaggedLines.yarn,Destination,9
-line:test4,Test line 4,W:\CppProject\yarn-c99\tests\yarn-files\TaggedLines.yarn,Destination,10
+line:test1,Test line 1,/home/user/Documents/c_project/YarnC99/tests/yarn-files/TaggedLines.yarn,Start,3
+line:test2,Test line 2,/home/user/Documents/c_project/YarnC99/tests/yarn-files/TaggedLines.yarn,Start,4
+line:test3,Test line 3,/home/user/Documents/c_project/YarnC99/tests/yarn-files/TaggedLines.yarn,Destination,9
+line:test4,Test line 4,/home/user/Documents/c_project/YarnC99/tests/yarn-files/TaggedLines.yarn,Destination,10

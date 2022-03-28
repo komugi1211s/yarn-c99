@@ -47,8 +47,9 @@ void yarn_handle_line(yarn_ctx *ctx, yarn_line *line) {
         }
     }
 
-    printf("%s\n", message);
-    getchar();
+    printf("%s", message);
+    char a = 0;
+    while ((a = getchar()) && a != '\n') {}
     yarn_continue(ctx);
 }
 
@@ -89,6 +90,8 @@ void yarn_handle_option(yarn_ctx *ctx, yarn_option *options, int option_count) {
         }
 
         if (chosen) {
+            char b = 0;
+            while ((b = getchar()) && b != '\n') {}
             yarn_select_option(ctx, a);
             break;
         }

@@ -1,17 +1,17 @@
 id,text,file,node,lineNumber
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-0,This is a line!,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,5
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-1,What what this is also a line!,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,8
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-2,Foo is 3!,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,16
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-3,Foo is 4!,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,18
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-4,Foo is something TOTALLY DIFFERENT.,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,20
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-5,This is a shortcut option that you'll never see,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,23
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-6,Nice.,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,24
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-7,This is a different shortcut option,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,25
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-8,"Sweet, but what about this?",W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,26
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-9,It's ok,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,27
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-10,Cool.,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,28
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-11,Huh?,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,29
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-12,This is a shortcut option with no consequential text.,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,30
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-13,All done with the shortcut options!,W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,32
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-14,[[Option 1!|Option1]],W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,34
-line:W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn-Start-15,[[Option 2!|Option2]],W:\CppProject\yarn-c99\tests\yarn-files\Compiler.yarn,Start,35
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-0,This is a line!,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,5
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-1,What what this is also a line!,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,8
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-2,Foo is 3!,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,16
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-3,Foo is 4!,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,18
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-4,Foo is something TOTALLY DIFFERENT.,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,20
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-5,This is a shortcut option that you'll never see,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,23
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-6,Nice.,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,24
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-7,This is a different shortcut option,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,25
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-8,"Sweet, but what about this?",/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,26
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-9,It's ok,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,27
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-10,Cool.,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,28
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-11,Huh?,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,29
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-12,This is a shortcut option with no consequential text.,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,30
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-13,All done with the shortcut options!,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,32
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-14,[[Option 1!|Option1]],/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,34
+line:/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn-Start-15,[[Option 2!|Option2]],/home/user/Documents/c_project/YarnC99/tests/yarn-files/Compiler.yarn,Start,35

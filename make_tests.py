@@ -12,6 +12,8 @@ def create_tests():
 
     ysc_path = "dist/ysc.exe" if os.name == "nt" else "dist/ysc"
 
+    if not pathlib.Path(TEST_C_FOLDER).exists():
+        pathlib.Path(TEST_C_FOLDER).mkdir()
     if not pathlib.Path(ysc_path).exists():
         print("[TESTER] Cannot create tests: ysc does not exist inside distribution folder")
         return

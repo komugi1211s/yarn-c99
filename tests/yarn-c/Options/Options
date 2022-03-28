@@ -1,5 +1,0 @@
-id,text,file,node,lineNumber
-line:W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn-A-0,Go to B,W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn,A,3
-line:W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn-A-1,Go to C,W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn,A,5
-line:W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn-B-2,Node B,W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn,B,10
-line:W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn-C-3,Node C,W:\CppProject\yarn-c99\tests\yarn-files\Options.yarn,C,14
