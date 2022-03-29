@@ -7,3 +7,6 @@ endif
 
 all:
 	$(BUILD_COMMAND)
+
+release:
+	$(BUILD_COMMAND) release

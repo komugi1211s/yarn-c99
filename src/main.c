@@ -112,19 +112,12 @@ int main(int argc, char **argv) {
     size_t strtable_size = 0;
     char *yarn_c = read_entire_file(yarnc, &yarnc_size);
     char *strtable = read_entire_file(csv, &strtable_size);
-    printf("Loading a program\n");
+
     yarn_load_program(dialogue, yarn_c, yarnc_size, strtable, strtable_size);
 
-    dialogue->delegates.line_handler    = yarn_handle_line;
-    dialogue->delegates.option_handler  = yarn_handle_option;
-    dialogue->delegates.command_handler = yarn_handle_command;
-    printf("starting a dialogue\n");
-    yarn_continue(dialogue);
-
-    printf("destroying dialogue\n");
-    yarn_destroy_dialogue(dialogue);
     free(yarn_c);
     free(strtable);
+    yarn_destroy_dialogue(dialogue);
 
     stb_leakcheck_dumpmem();
 }

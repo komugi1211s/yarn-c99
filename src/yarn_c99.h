@@ -131,8 +131,8 @@ typedef YARN_DYN_ARRAY(yarn_option)       yarn_option_set;
 typedef void yarn_line_handler_func(yarn_dialogue *dialogue, yarn_line *line);
 typedef void yarn_option_handler_func(yarn_dialogue *dialogue, yarn_option *options, int options_count);
 typedef void yarn_command_handler_func(yarn_dialogue *dialogue, char *command);
-typedef void yarn_node_start_handler_func(yarn_dialogue *dialogue);
-typedef void yarn_node_complete_handler_func(yarn_dialogue *dialogue);
+typedef void yarn_node_start_handler_func(yarn_dialogue *dialogue, char *node_name);
+typedef void yarn_node_complete_handler_func(yarn_dialogue *dialogue, char *node_name);
 typedef void yarn_dialogue_complete_handler_func(yarn_dialogue *dialogue);
 typedef void yarn_prepare_for_lines_handler_func(yarn_dialogue *dialogue, char **ids, int ids_count);
 
@@ -543,7 +543,7 @@ int yarn_continue(yarn_dialogue *dialogue) {
         dialogue->current_instruction++;
 
         if (dialogue->current_instruction > node->n_instructions) {
-            dialogue->delegates.node_complete_handler(dialogue);
+            dialogue->delegates.node_complete_handler(dialogue, node->name);
             dialogue->execution_state = YARN_EXEC_STOPPED;
             yarn__reset_state(dialogue); /* original version has a setter that resets VM state when operation stops. */
 
@@ -578,7 +578,7 @@ int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
     dialogue->current_node = index;
 
     if (dialogue->delegates.node_start_handler) {
-        dialogue->delegates.node_start_handler(dialogue);
+        dialogue->delegates.node_start_handler(dialogue, node_name);
         if (dialogue->delegates.prepare_for_lines_handler) {
             char **ids = yarn_malloc(dialogue->alloc_ptr, sizeof(void *) * node->n_instructions);
             int n_ids = 0;
@@ -779,12 +779,14 @@ void yarn__stub_command_handler(yarn_dialogue *dialogue, char *command) {
     yarn_continue(dialogue);
 }
 
-void yarn__stub_node_start_handler(yarn_dialogue *dialogue) {
+void yarn__stub_node_start_handler(yarn_dialogue *dialogue, char *node_name) {
     printf("Stub: node start handler called\n");
+    printf("    : beginning node \"%s\"\n", node_name);
 }
 
-void yarn__stub_node_complete_handler(yarn_dialogue *dialogue) {
+void yarn__stub_node_complete_handler(yarn_dialogue *dialogue, char *node_name) {
     printf("Stub: node complete handler called\n");
+    printf("    : ending node \"%s\"\n", node_name);
 }
 
 void yarn__stub_dialogue_complete_handler(yarn_dialogue *dialogue) {
@@ -1024,7 +1026,8 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
         case YARN__INSTRUCTION__OP_CODE__STOP:
         {
-            dialogue->delegates.node_complete_handler(dialogue);
+            Yarn__Node *node = dialogue->program->nodes[dialogue->current_node]->value;
+            dialogue->delegates.node_complete_handler(dialogue, node->name);
             dialogue->delegates.dialogue_complete_handler(dialogue);
 
             dialogue->execution_state = YARN_EXEC_STOPPED;
@@ -1034,7 +1037,9 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
         {
             yarn_value value = yarn_pop_value(dialogue);
             char *node_name = yarn_value_as_string(value);
-            dialogue->delegates.node_complete_handler(dialogue);
+
+            Yarn__Node *previous_node = dialogue->program->nodes[dialogue->current_node]->value;
+            dialogue->delegates.node_complete_handler(dialogue, previous_node->name);
 
             yarn_set_node(dialogue, node_name);
             dialogue->current_instruction -= 1;

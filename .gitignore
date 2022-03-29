@@ -3,3 +3,9 @@ tags
 
 # for testing
 src/stb_leakcheck.h
+
+# perf stuff
+massif.*
+callgrind.*
+perf.*
+
