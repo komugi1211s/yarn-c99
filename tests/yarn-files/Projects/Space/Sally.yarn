@@ -18,17 +18,23 @@ position: 524,111
     Sally: Hi. #line:305cde
 <<endif>>
 
-<<if not visited("Sally.Watch")>>
-    [[Anything exciting happen on your watch?|Sally.Watch]] #line:5d7a7c
+<<if not visited("Sally_Watch")>>
+    // Option "Anything exciting happen on your watch?" moved to the end of this node
 <<endif>>
 
-<<if $sally_warning and not visited("Sally.Sorry")>>
-    [[Sorry about the console.|Sally.Sorry]] #line:0a7e39
+<<if $sally_warning and not visited("Sally_Sorry")>>
+    // Option "Sorry about the console." moved to the end of this node
 <<endif>>
-[[See you later.|Sally.Exit]] #line:0facf7
+// Option "See you later." moved to the end of this node
+-> Anything exciting happen on your watch? <<if (not visited("Sally_Watch"))>> #line:5d7a7c
+    <<jump Sally_Watch>>
+-> Sorry about the console. <<if ($sally_warning and not visited("Sally_Sorry"))>> #line:0a7e39
+    <<jump Sally_Sorry>>
+-> See you later. #line:0facf7
+    <<jump Sally_Exit>>
 ===
 
-title: Sally.Watch
+title: Sally_Watch
 tags: 
 colorID: 0
 position: 512,430
@@ -43,7 +49,7 @@ Sally: Oh, Ship wanted to see you. Go say hi to it. #line:df4eaf
 <<endif>>
 ===
 
-title: Sally.Exit
+title: Sally_Exit
 tags: 
 colorID: 6
 position: 211,417
@@ -51,7 +57,7 @@ position: 211,417
 Sally: Bye. #line:60c282
 ===
 
-title: Sally.Sorry
+title: Sally_Sorry
 tags: 
 colorID: 0
 position: 827,439

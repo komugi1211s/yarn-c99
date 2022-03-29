@@ -1,5 +1,4 @@
 
-#define YARN_C99_IMPLEMENTATION
 
 #include "protobuf-c.c"
 #include "yarn_spinner.pb-c.h"
@@ -8,11 +7,10 @@
 #define STB_LEAKCHECK_IMPLEMENTATION
 #define STB_LEAKCHECK_REALLOC_PRESERVE_MALLOC_FILELINE
 #include "stb_leakcheck.h"
-#include "yarn_c99.h"
 
-struct Entity {
-    int commands;
-};
+#define YARN_C99_IMPLEMENTATION
+#define YARN_C99_STUB_TO_NOOP
+#include "yarn_c99.h"
 
 char *read_entire_file(char *file_name, size_t *bytes_read) {
     assert(file_name && bytes_read);
@@ -105,15 +103,24 @@ void yarn_handle_command(yarn_dialogue *dialogue, char *cmd) {
 int main(int argc, char **argv) {
     yarn_dialogue *dialogue = yarn_create_dialogue_heap(0);
 
-    assert(argc == 3);
+    assert(argc == 4);
     char *yarnc = argv[1];
     char *csv   = argv[2];
+    char *first_node_name = argv[3];
     size_t yarnc_size = 0;
     size_t strtable_size = 0;
     char *yarn_c = read_entire_file(yarnc, &yarnc_size);
     char *strtable = read_entire_file(csv, &strtable_size);
-
     yarn_load_program(dialogue, yarn_c, yarnc_size, strtable, strtable_size);
+
+#if 1
+    dialogue->delegates.line_handler   = yarn_handle_line;
+    dialogue->delegates.option_handler = yarn_handle_option;
+    dialogue->delegates.command_handler = yarn_handle_command;
+#endif
+
+    yarn_set_node(dialogue, first_node_name);
+    yarn_continue(dialogue);
 
     free(yarn_c);
     free(strtable);
