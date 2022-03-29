@@ -4,10 +4,6 @@
 #include "yarn_spinner.pb-c.h"
 #include "yarn_spinner.pb-c.c"
 
-#define STB_LEAKCHECK_IMPLEMENTATION
-#define STB_LEAKCHECK_REALLOC_PRESERVE_MALLOC_FILELINE
-#include "stb_leakcheck.h"
-
 #define YARN_C99_IMPLEMENTATION
 #define YARN_C99_STUB_TO_NOOP
 #include "yarn_c99.h"
@@ -101,7 +97,8 @@ void yarn_handle_command(yarn_dialogue *dialogue, char *cmd) {
 }
 
 int main(int argc, char **argv) {
-    yarn_dialogue *dialogue = yarn_create_dialogue_heap(0);
+    yarn_variable_storage storage = yarn_create_default_storage(NULL);
+    yarn_dialogue       *dialogue = yarn_create_dialogue(NULL, storage);
 
     assert(argc == 4);
     char *yarnc = argv[1];
@@ -112,6 +109,7 @@ int main(int argc, char **argv) {
     char *yarn_c = read_entire_file(yarnc, &yarnc_size);
     char *strtable = read_entire_file(csv, &strtable_size);
     yarn_load_program(dialogue, yarn_c, yarnc_size, strtable, strtable_size);
+
 
 #if 1
     dialogue->delegates.line_handler   = yarn_handle_line;
@@ -125,6 +123,5 @@ int main(int argc, char **argv) {
     free(yarn_c);
     free(strtable);
     yarn_destroy_dialogue(dialogue);
-
-    stb_leakcheck_dumpmem();
+    yarn_destroy_default_storage(storage);
 }

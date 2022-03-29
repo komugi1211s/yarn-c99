@@ -96,7 +96,61 @@ info:
 struct Yarn__Program;
 struct Yarn__Instruction;
 
+/* TODO: same as lua. */
+#define YARN_STACK_CAPACITY 256
+
 typedef struct yarn_dialogue yarn_dialogue;
+typedef struct yarn_value    yarn_value;
+
+/* =========================================
+ * Interface for variable storage:
+ *   C does not have any OOP capability (besides EXTREMELY SIMPLE inheritance hack),
+ *   so in C99 port it uses function pointer + context data to simulate virtual functions.
+ *
+ * For Start:
+ *   you can do this to create dynamic array based storage:
+ *     yarn_variable_storage storage = yarn_create_default_storage();
+ *     yarn_dialogue *dialogue = yarn_create_dialogue(NULL, storage);
+ *
+ *   and do this when it's done
+ *     yarn_destroy_dialogue(dialogue);
+ *     yarn_destroy_default_storage(storage);
+ *
+ *   default storage is a very barebone storage that uses dynamic array underneath,
+ *   and iterates through the entire entry every time you perform lookup O(n) operation.
+ *
+ *   because of that I don't recommend storing more than 1000 variables.
+ *   (most of the time it SHOULD be more than enough with default storage.)
+ *
+ * alternatively, you can create your own storage:
+ *   1. make functions, like this
+ *     struct SomethingStore {}
+ *     yarn_value load_func(SomethingStore *store, char *varname) { ... }
+ *     void       save_func(SomethingStore *store, char *varname, yarn_value value) { ... }
+ *
+ *   2. create interface for struct below.
+ *   
+ *     struct SomethingStore *store = make_somethingstore();
+ *     yarn_variable_storage istorage = {0};
+ *
+ *     istorage.data = store;
+ *     istorage.load = load_func;
+ *     istorage.save = save_func;
+ *
+ *   3. pass it into dialogue
+ *     yarn_dialogue *dialogue = yarn_create_dialogue(NULL, storage);
+ *
+ */
+
+typedef yarn_value yarn_load_variable_func(void *storage, char *name);
+typedef void       yarn_save_variable_func(void *storage, char *name, yarn_value value);
+
+typedef struct {
+    void *data;
+    yarn_load_variable_func *load;
+    yarn_save_variable_func *save;
+} yarn_variable_storage;
+
 
 /*
  * TODO: recipe for fragmentation disaster. fix it
@@ -152,12 +206,6 @@ typedef struct {
 } yarn_delegates;
 
 /*
-    TODO:
-    reset this part each time you implement delegate.
-*/
-YARN_STATIC_ASSERT(sizeof(yarn_delegates) == (sizeof(void *) * 7), delegate_size_mismatch);
-
-/*
  * Stubs!
  */
 YARN_C99_DEF yarn_line_handler_func              yarn__stub_line_handler;
@@ -175,14 +223,14 @@ typedef enum {
     YARN_VALUE_FLOAT,
 } yarn_value_type;
 
-typedef struct {
+struct yarn_value {
     yarn_value_type type;
     union {
         char *v_string;
         int   v_bool;
         float v_float;
     } values;
-} yarn_value;
+};
 
 typedef yarn_value (*yarn_lib_func)(yarn_dialogue *dialogue);
 
@@ -192,15 +240,7 @@ typedef struct {
     int             param_count;
 } yarn_functions;
 
-/* TODO:
- * this works under the assumption that variable never collides with each other. */
-typedef struct {
-    uint32_t   hash;
-    size_t     original_str_length;
-    yarn_value value;
-} yarn_variable_entry;
 
-typedef YARN_DYN_ARRAY(yarn_variable_entry) yarn_variables;
 typedef YARN_DYN_ARRAY(yarn_functions)      yarn_library;
 
 typedef enum {
@@ -211,9 +251,6 @@ typedef enum {
     YARN_EXEC_RUNNING,
 } yarn_exec_state;
 
-/* TODO: same as lua. */
-#define YARN_STACK_CAPACITY 256
-
 struct yarn_dialogue {
     // ProtobufCAllocator *program_allocator;
     void *alloc_ptr; /* will be passed into malloc, free, realloc. */
@@ -223,8 +260,8 @@ struct yarn_dialogue {
     yarn_exec_state     execution_state;
     yarn_delegates      delegates;
 
-    yarn_variables  variables;   /* TODO: should it be a hash map? */
-    yarn_library    library;     /* TODO: should it be a hash map? */
+    yarn_variable_storage storage;
+    yarn_library library;     /* TODO: should it be a hash map? */
 
     yarn_option_set current_options;
 
@@ -241,7 +278,7 @@ YARN_C99_DEF yarn_value yarn_none();
 YARN_C99_DEF yarn_value yarn_float(float real);
 YARN_C99_DEF yarn_value yarn_int(int integer);
 YARN_C99_DEF yarn_value yarn_bool(int boolean);
-YARN_C99_DEF yarn_value yarn_string(char *string);
+YARN_C99_DEF yarn_value yarn_string(char *string); /* TODO: this does not copy string!! */
 
 /* unravels value. */
 YARN_C99_DEF char *yarn_value_as_string(yarn_value value);
@@ -250,6 +287,9 @@ YARN_C99_DEF int   yarn_value_as_bool(yarn_value value);
 YARN_C99_DEF float yarn_value_as_float(yarn_value value);
 
 /* manipulates Yarn VM. */
+YARN_C99_DEF int yarn_is_active(yarn_dialogue *dialogue);
+YARN_C99_DEF int yarn_continue(yarn_dialogue *dialogue);
+
 YARN_C99_DEF yarn_value yarn_pop_value(yarn_dialogue *dialogue);
 YARN_C99_DEF void       yarn_push_value(yarn_dialogue *dialogue, yarn_value value);
 
@@ -258,15 +298,17 @@ YARN_C99_DEF void       yarn_store_variable(yarn_dialogue *dialogue, char *var_n
 
 YARN_C99_DEF int   yarn_set_node(yarn_dialogue *dialogue, char *node_name);
 YARN_C99_DEF int   yarn_select_option(yarn_dialogue *dialogue, int select_option);
+
+/* TODO: This function should be the job of LineParser. */
 YARN_C99_DEF char *yarn_load_line(yarn_dialogue *dialogue, yarn_line *line);
 
-/* spins Yarn VM. */
-YARN_C99_DEF int yarn_is_active(yarn_dialogue *dialogue);
-YARN_C99_DEF int yarn_continue(yarn_dialogue *dialogue);
 
 /* Creation / Destroy functions. */
-YARN_C99_DEF yarn_dialogue *yarn_create_dialogue_heap();
-YARN_C99_DEF void      yarn_destroy_dialogue(yarn_dialogue *dialogue);
+YARN_C99_DEF yarn_dialogue *yarn_create_dialogue(void *allocator_context, yarn_variable_storage storage);
+YARN_C99_DEF void           yarn_destroy_dialogue(yarn_dialogue *dialogue);
+
+YARN_C99_DEF yarn_variable_storage yarn_create_default_storage(void *allocator_context);
+YARN_C99_DEF void yarn_destroy_default_storage(yarn_variable_storage storage);
 
 /* Function related stuff. */
 YARN_C99_DEF yarn_functions *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
@@ -276,20 +318,34 @@ YARN_C99_DEF int yarn_load_functions(yarn_dialogue *dialogue, yarn_functions *fu
 YARN_C99_DEF int yarn_load_program(yarn_dialogue *dialogue, void *program_buffer, size_t program_length, void *string_table_buffer, size_t string_table_length);
 
 /*
- * Internal functions.
- * (although you can easily call them however you want to,
- *  these function makes a lot of assumption under the hood.
- *  use it wisely, only when you know what you're doing.)
+ * ====================================================
+ * Internals
+ * ====================================================
+ * */
+
+/*
+ * Standard libraries.
+ * based on c#'s standard libraries. definitions will be inside the IMPLEMENTATION block.
  */
+YARN_C99_DEF yarn_functions yarn__standard_libs[];
+
+
+/* dynamic variable stuff. */
+typedef struct {
+    uint32_t   hash;
+    char      *name;
+    size_t     original_str_length;
+    yarn_value value;
+} yarn__var_entry;
+
+typedef YARN_DYN_ARRAY(yarn__var_entry) yarn__var_array;
 
 /* Hashes string. */
 YARN_C99_DEF uint32_t yarn__hashstr(char *str, size_t strlength);
 
-/*
- * Standard libraries.
- * based on c#'s standard libraries.
- */
-YARN_C99_DEF yarn_functions yarn__standard_libs[];
+/* strndup implementation that uses yarn_malloc. */
+YARN_C99_DEF char *yarn__strndup(void *alloc_ctx, char *original, size_t length);
+
 
 /* tries to extend dynamic array. */
 YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps, void *allocator);
@@ -305,7 +361,7 @@ YARN_C99_DEF yarn_parsed_entry *yarn__alloc_line(yarn_string_repo *string_repo, 
 
 /*
  * allocates new string with substituted value for {0}, {1}, {2}... format.
- * TODO: this could be completely broken. look through.
+ * TODO: this should be an operation of LineParser (probably). fix.
  */
 YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_substs, void *alloc_ptr);
 
@@ -349,6 +405,12 @@ YARN_C99_DEF char *yarn__get_visited_name_for_node(char *name);
  * Asserts if the yarn dialogue can be continued.
  */
 YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
+
+/*
+ * functions for default (dynamic array based) storage.
+ */
+YARN_C99_DEF yarn_value yarn__load_from_variable_array(yarn__var_array *storage, char *var_name);
+YARN_C99_DEF void yarn__save_into_variable_array(yarn__var_array *storage, char *var_name, yarn_value value);
 #endif
 
 /*
@@ -364,11 +426,11 @@ YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
  * Dynamic array stuff.
  */
 
-#define YARN_MAKE_DYNARRAY(target, elemsize, cap, alloc_ctx) do { \
+#define YARN_MAKE_DYNARRAY(target, elemtype, cap, alloc_ctx) do { \
     (target)->allocator = alloc_ctx;                   \
     (target)->capacity  = cap;                         \
     (target)->used      = 0;                           \
-    (target)->entries   = yarn_malloc(allocator, cap * elemsize); \
+    (target)->entries   = yarn_malloc(allocator, cap * sizeof(elemtype)); \
 } while(0)
 
 #define YARN_FREE_DYNARRAY(target) do { \
@@ -483,40 +545,11 @@ void yarn_push_value(yarn_dialogue *dialogue, yarn_value value) {
 }
 
 yarn_value yarn_load_variable(yarn_dialogue *dialogue, char *var_name) {
-    size_t length = strlen(var_name);
-    uint32_t hash = yarn__hashstr(var_name, length);
-    for (int i = 0; i < dialogue->variables.used; ++i) {
-        yarn_variable_entry e = dialogue->variables.entries[i];
-
-        if (e.hash == hash && e.original_str_length == length) {
-            /* TODO: Hope that it's not colliding and return variable */
-            return e.value;
-        }
-    }
-
-    return yarn_none();
+    return dialogue->storage.load(dialogue->storage.data, var_name);
 }
 
 void yarn_store_variable(yarn_dialogue *dialogue, char *var_name, yarn_value value) {
-    size_t length = strlen(var_name);
-    uint32_t hash = yarn__hashstr(var_name, length);
-
-    for (int i = 0; i < dialogue->variables.used; ++i) {
-        yarn_variable_entry *e = &dialogue->variables.entries[i];
-
-        if (e->hash == hash && e->original_str_length == length) {
-            e->value = value;
-            return;
-        }
-    }
-
-    /* variable does not exist: create new entry instead. */
-    yarn_variable_entry entry = {0};
-    entry.hash = hash;
-    entry.original_str_length = length;
-    entry.value = value;
-
-    YARN_DYNARR_APPEND(&dialogue->variables, entry);
+    dialogue->storage.save(dialogue->storage.data, var_name, value);
 }
 
 int yarn_continue(yarn_dialogue *dialogue) {
@@ -644,20 +677,21 @@ int yarn_select_option(yarn_dialogue *dialogue, int select_option) {
     return 1;
 }
 
-yarn_dialogue *yarn_create_dialogue_heap(void *allocation_context) {
-    yarn_dialogue *dialogue = yarn_malloc(allocation_context, sizeof(yarn_dialogue));
-    dialogue->program       = 0;
-    dialogue->alloc_ptr     = allocation_context;
+yarn_dialogue *yarn_create_dialogue(void *allocator_context, yarn_variable_storage storage) {
+    yarn_dialogue *dialogue = yarn_malloc(allocator_context, sizeof(yarn_dialogue));
 
+    dialogue->alloc_ptr = allocator_context;
 
-    dialogue->strings.used     = 0;
-    dialogue->strings.capacity = 512;
-    dialogue->strings.entries    = yarn_malloc(dialogue->alloc_ptr, sizeof(yarn_parsed_entry) * 512);
+    dialogue->program = 0;
+    dialogue->storage = storage;
 
-    /* NOTE: it's fine as long as I don't put float or something into yarn_parsed_entry. */
-    memset(dialogue->strings.entries, 0, sizeof(yarn_parsed_entry) * 512);
+    dialogue->current_node        = 0;
+    dialogue->current_instruction = 0;
+    dialogue->execution_state     = YARN_EXEC_STOPPED;
 
-    dialogue->execution_state = YARN_EXEC_STOPPED;
+    dialogue->stack_ptr = 0;
+    memset(dialogue->stack, 0, sizeof(yarn_value) * YARN_STACK_CAPACITY);
+
     dialogue->delegates.line_handler              = &yarn__stub_line_handler;
     dialogue->delegates.option_handler            = &yarn__stub_option_handler;
     dialogue->delegates.command_handler           = &yarn__stub_command_handler;
@@ -666,15 +700,12 @@ yarn_dialogue *yarn_create_dialogue_heap(void *allocation_context) {
     dialogue->delegates.dialogue_complete_handler = &yarn__stub_dialogue_complete_handler;
     dialogue->delegates.prepare_for_lines_handler = &yarn__stub_prepare_for_lines_handler;
 
-    dialogue->stack_ptr = 0;
-    memset(dialogue->stack, 0, sizeof(yarn_value) * YARN_STACK_CAPACITY);
+    YARN_MAKE_DYNARRAY(&dialogue->strings,         yarn_parsed_entry, 512, dialogue->alloc_ptr);
+    YARN_MAKE_DYNARRAY(&dialogue->library,         yarn_functions,    32,  dialogue->alloc_ptr);
+    YARN_MAKE_DYNARRAY(&dialogue->current_options, yarn_option,       32,  dialogue->alloc_ptr);
 
-    dialogue->current_node = 0;
-    dialogue->current_instruction = 0;
-
-    YARN_MAKE_DYNARRAY(&dialogue->library, sizeof(yarn_functions), 32, dialogue->alloc_ptr);
-    YARN_MAKE_DYNARRAY(&dialogue->variables, sizeof(yarn_variable_entry), 32, dialogue->alloc_ptr);
-    YARN_MAKE_DYNARRAY(&dialogue->current_options, sizeof(yarn_option), 32, dialogue->alloc_ptr);
+    /* NOTE: it's fine as long as I don't put float or something into yarn_parsed_entry. */
+    memset(dialogue->strings.entries, 0, sizeof(yarn_parsed_entry) * 512);
 
     yarn_load_functions(dialogue, yarn__standard_libs);
     return dialogue;
@@ -698,10 +729,32 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
     }
 
     yarn_free(dialogue->alloc_ptr, dialogue->current_options.entries);
-    yarn_free(dialogue->alloc_ptr, dialogue->variables.entries);
     yarn_free(dialogue->alloc_ptr, dialogue->library.entries);
     yarn_free(dialogue->alloc_ptr, dialogue->strings.entries);
     yarn_free(dialogue->alloc_ptr, dialogue);
+}
+
+yarn_variable_storage yarn_create_default_storage(void *allocator_context) {
+    yarn__var_array *array = yarn_malloc(allocator_context, sizeof(yarn__var_array));
+    YARN_MAKE_DYNARRAY(array, yarn__var_entry, 64, allocator_context);
+
+    yarn_variable_storage storage = {0};
+    storage.data = array;
+    storage.load = &yarn__load_from_variable_array;
+    storage.save = &yarn__save_into_variable_array;
+
+    return storage;
+}
+
+void yarn_destroy_default_storage(yarn_variable_storage storage) {
+    yarn__var_array *array = storage.data;
+
+    for (int i = 0; i < array->used; ++i) {
+        yarn_free(array->allocator, array->entries[i].name);
+    }
+
+    yarn_free(array->allocator, array->entries);
+    yarn_free(array->allocator, array);
 }
 
 int yarn_load_functions(yarn_dialogue *dialogue, yarn_functions *loading_functions) {
@@ -869,6 +922,62 @@ int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size
         return 1;
     }
     return 0;
+}
+
+char *yarn__strndup(void *allocator, char *cloning, size_t length) {
+    char *result = yarn_malloc(allocator, length + 1);
+    memset(result, 0, length + 1);
+
+    for (size_t i = 0; i < length; ++i) {
+        result[i] = cloning[i];
+    }
+
+    return result;
+}
+
+/* ===========================================
+ * Dynamic Array based default storage functions.
+ */
+
+yarn_value yarn__load_from_variable_array(yarn__var_array *storage, char *var_name) {
+    size_t length = strlen(var_name);
+    uint32_t hash = yarn__hashstr(var_name, length);
+    for (int i = 0; i < storage->used; ++i) {
+        yarn__var_entry e = storage->entries[i];
+
+        if (e.hash == hash && e.original_str_length == length) {
+            if (strncmp(var_name, e.name, length) == 0) {
+                return e.value;
+            }
+        }
+    }
+
+    return yarn_none();
+}
+
+void yarn__save_into_variable_array(yarn__var_array *storage, char *var_name, yarn_value value) {
+    size_t length = strlen(var_name);
+    uint32_t hash = yarn__hashstr(var_name, length);
+
+    for (int i = 0; i < storage->used; ++i) {
+        yarn__var_entry *e = &storage->entries[i];
+
+        if (e->hash == hash && e->original_str_length == length) {
+            if(strncmp(var_name, e->name, length) == 0) {
+                e->value = value;
+                return;
+            }
+        }
+    }
+
+    /* variable does not exist: create new entry instead. */
+    yarn__var_entry entry = {0};
+    entry.hash = hash;
+    entry.name = yarn__strndup(storage->allocator, var_name, length);
+    entry.original_str_length = length;
+    entry.value = value;
+
+    YARN_DYNARR_APPEND(storage, entry);
 }
 
 /* ===========================================
@@ -1446,7 +1555,7 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs, void *a
     size_t memory_size = base_strlen + (base_strlen & 16); /* Align to 16 */
 
     yarn__str_builder string_builder = {0};
-    YARN_MAKE_DYNARRAY(&string_builder, sizeof(char), memory_size, alloc_ptr);
+    YARN_MAKE_DYNARRAY(&string_builder, char, memory_size, alloc_ptr);
 
     for (size_t i = 0; i < base_strlen; ++i) {
         if (format[i] == '{') {
