@@ -1,7 +1,8 @@
 /*
  ==========================================
  Yarn C99 runtime v0.0
- Compatible with Yarn Spinner 2.0 or above.
+ Compatible with Yarn Spinner 2.0.
+ tested to produce the same result as if you used `ysc run [file here]`
 
  follow prerequisite, getting started, then usage section.
 
@@ -42,10 +43,6 @@
 #if !defined(YARN_C99_INCLUDE)
 #define YARN_C99_INCLUDE
 
-// #include "protobuf-c.c"
-// #include "yarn_spinner.pb-c.h"
-// #include "yarn_spinner.pb-c.c"
-
 #include <stdint.h>
 #include <assert.h>
 #include <string.h> /* for strncmp, memset */
@@ -77,8 +74,8 @@
 #define YARN_KB(n) ((size_t)(n) * 1024)
 #define YARN_MB(n) ((size_t)(n) * 1024 * 1024)
 
-#define YARN_STATIC_ASSERT(cond) \
-    typedef char YARN_CONCAT(yarn_static_assert_line_, __LINE__)[(cond) ? 1 : -1];
+#define YARN_STATIC_ASSERT(cond, ident_message) \
+    typedef char YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__))[(cond) ? 1 : -1];
 
 #if !defined(yarn_malloc) || !defined(yarn_free) || !defined(yarn_realloc)
   #if !defined(yarn_malloc) && !defined(yarn_free) && !defined(yarn_realloc)
@@ -94,7 +91,7 @@
 struct Yarn__Program;
 struct Yarn__Instruction;
 
-typedef struct yarn_ctx yarn_ctx;
+typedef struct yarn_dialogue yarn_dialogue;
 
 /*
  * TODO: recipe for fragmentation disaster. fix it
@@ -105,13 +102,7 @@ typedef struct {
     char *file;         /* TODO: @interning can be interned. */
     char *node;         /* TODO: @interning can be interned. */
     int   line_number;
-} yarn_string_line;
-
-typedef struct {
-    size_t used;
-    size_t capacity;
-    yarn_string_line *entries;
-} yarn_string_repo;
+} yarn_parsed_entry;
 
 typedef struct {
     char *id;
@@ -127,19 +118,23 @@ typedef struct {
     int is_available; /* 1 = true, 0 = false */
 } yarn_option;
 
-typedef struct {
-    size_t capacity;
-    size_t used;
-    yarn_option *entries;
-} yarn_option_set;
+#define YARN_DYN_ARRAY(ty) struct { \
+    void *allocator; \
+    size_t used; \
+    size_t capacity; \
+    ty *entries; \
+}
 
-typedef void yarn_line_handler_func(yarn_ctx *ctx, yarn_line *line);
-typedef void yarn_option_handler_func(yarn_ctx *ctx, yarn_option *options, int options_count);
-typedef void yarn_command_handler_func(yarn_ctx *ctx, char *command);
-typedef void yarn_node_start_handler_func(yarn_ctx *ctx);
-typedef void yarn_node_complete_handler_func(yarn_ctx *ctx);
-typedef void yarn_dialogue_complete_handler_func(yarn_ctx *ctx);
-typedef void yarn_prepare_for_lines_handler_func(yarn_ctx *ctx, char **ids, int ids_count);
+typedef YARN_DYN_ARRAY(yarn_parsed_entry) yarn_string_repo;
+typedef YARN_DYN_ARRAY(yarn_option)       yarn_option_set;
+
+typedef void yarn_line_handler_func(yarn_dialogue *dialogue, yarn_line *line);
+typedef void yarn_option_handler_func(yarn_dialogue *dialogue, yarn_option *options, int options_count);
+typedef void yarn_command_handler_func(yarn_dialogue *dialogue, char *command);
+typedef void yarn_node_start_handler_func(yarn_dialogue *dialogue);
+typedef void yarn_node_complete_handler_func(yarn_dialogue *dialogue);
+typedef void yarn_dialogue_complete_handler_func(yarn_dialogue *dialogue);
+typedef void yarn_prepare_for_lines_handler_func(yarn_dialogue *dialogue, char **ids, int ids_count);
 
 typedef struct {
     yarn_line_handler_func              *line_handler;
@@ -155,7 +150,7 @@ typedef struct {
     TODO:
     reset this part each time you implement delegate.
 */
-YARN_STATIC_ASSERT(sizeof(yarn_delegates) == (sizeof(void *) * 7));
+YARN_STATIC_ASSERT(sizeof(yarn_delegates) == (sizeof(void *) * 7), delegate_size_mismatch);
 
 /*
  * Stubs!
@@ -184,7 +179,7 @@ typedef struct {
     } values;
 } yarn_value;
 
-typedef yarn_value (*yarn_lib_func)(yarn_ctx *ctx);
+typedef yarn_value (*yarn_lib_func)(yarn_dialogue *dialogue);
 
 typedef struct {
     char            *name;
@@ -200,17 +195,8 @@ typedef struct {
     yarn_value value;
 } yarn_variable_entry;
 
-typedef struct {
-    size_t used;
-    size_t capacity;
-    yarn_variable_entry *entries;
-} yarn_variables;
-
-typedef struct {
-    size_t used;
-    size_t capacity;
-    yarn_functions *entries;
-} yarn_library;
+typedef YARN_DYN_ARRAY(yarn_variable_entry) yarn_variables;
+typedef YARN_DYN_ARRAY(yarn_functions)      yarn_library;
 
 typedef enum {
     YARN_EXEC_STOPPED = 0,
@@ -220,9 +206,10 @@ typedef enum {
     YARN_EXEC_RUNNING,
 } yarn_exec_state;
 
+/* TODO: same as lua. */
 #define YARN_STACK_CAPACITY 256
 
-struct yarn_ctx {
+struct yarn_dialogue {
     // ProtobufCAllocator *program_allocator;
     void *alloc_ptr; /* will be passed into malloc, free, realloc. */
 
@@ -236,9 +223,9 @@ struct yarn_ctx {
 
     yarn_option_set current_options;
 
-    int stack_ptr;
     yarn_value stack[YARN_STACK_CAPACITY];
 
+    int stack_ptr;
     int current_node;
     int current_instruction;
 };
@@ -258,28 +245,28 @@ YARN_C99_DEF int   yarn_value_as_bool(yarn_value value);
 YARN_C99_DEF float yarn_value_as_float(yarn_value value);
 
 /* manipulates Yarn VM. */
-YARN_C99_DEF yarn_value yarn_pop_value(yarn_ctx *ctx);
-YARN_C99_DEF void       yarn_push_value(yarn_ctx *ctx, yarn_value value);
+YARN_C99_DEF yarn_value yarn_pop_value(yarn_dialogue *dialogue);
+YARN_C99_DEF void       yarn_push_value(yarn_dialogue *dialogue, yarn_value value);
 
-YARN_C99_DEF yarn_value yarn_load_variable(yarn_ctx *ctx, char *var_name);
-YARN_C99_DEF void       yarn_store_variable(yarn_ctx *ctx, char *var_name, yarn_value value);
+YARN_C99_DEF yarn_value yarn_load_variable(yarn_dialogue *dialogue, char *var_name);
+YARN_C99_DEF void       yarn_store_variable(yarn_dialogue *dialogue, char *var_name, yarn_value value);
 
-YARN_C99_DEF int yarn_set_node(yarn_ctx *ctx, char *node_name);
-YARN_C99_DEF int yarn_select_option(yarn_ctx *ctx, int select_option);
+YARN_C99_DEF int yarn_set_node(yarn_dialogue *dialogue, char *node_name);
+YARN_C99_DEF int yarn_select_option(yarn_dialogue *dialogue, int select_option);
 
 /* spins Yarn VM. */
-YARN_C99_DEF int yarn_continue(yarn_ctx *ctx);
+YARN_C99_DEF int yarn_continue(yarn_dialogue *dialogue);
 
 /* Creation / Destroy functions. */
-YARN_C99_DEF yarn_ctx *yarn_create_context_heap();
-YARN_C99_DEF void      yarn_destroy_context(yarn_ctx *ctx);
+YARN_C99_DEF yarn_dialogue *yarn_create_dialogue_heap();
+YARN_C99_DEF void      yarn_destroy_dialogue(yarn_dialogue *dialogue);
 
 /* Function related stuff. */
-YARN_C99_DEF yarn_functions *yarn_get_function_with_name(yarn_ctx *ctx, char *funcname);
-YARN_C99_DEF int yarn_load_functions(yarn_ctx *ctx, yarn_functions *functions);
+YARN_C99_DEF yarn_functions *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
+YARN_C99_DEF int yarn_load_functions(yarn_dialogue *dialogue, yarn_functions *functions);
 
 /* Loading functions. */
-YARN_C99_DEF int yarn_load_program(yarn_ctx *ctx, void *program_buffer, size_t program_length, void *string_table_buffer, size_t string_table_length);
+YARN_C99_DEF int yarn_load_program(yarn_dialogue *dialogue, void *program_buffer, size_t program_length, void *string_table_buffer, size_t string_table_length);
 
 /*
  * Internal functions.
@@ -307,7 +294,7 @@ YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size
  * TODO: @interning -- this function will be converted into interning string
  * once I'm done with basics.
  */
-YARN_C99_DEF yarn_string_line *yarn__alloc_line(yarn_string_repo *string_repo, void *alloc_ptr);
+YARN_C99_DEF yarn_parsed_entry *yarn__alloc_line(yarn_string_repo *string_repo, void *alloc_ptr);
 
 /*
  * allocates new string with substituted value for {0}, {1}, {2}... format.
@@ -320,35 +307,35 @@ YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_su
  * works under the assumption that you (are loading/loaded) the corresponding program.
  * frees already loaded string table if it exists.
  */
-YARN_C99_DEF int yarn__load_string_table(yarn_ctx *ctx, void *string_table_buffer, size_t string_table_length);
+YARN_C99_DEF int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, size_t string_table_length);
 
 /*
  * runs single instruction.
  * works under the assumption that you already have working program loaded,
  * and vm is in the running state.
  */
-YARN_C99_DEF void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst);
+YARN_C99_DEF void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst);
 
 /*
  * find instruction index based on label.
  * returns -1 if not found.
  */
-YARN_C99_DEF int yarn__find_instruction_point_for_label(yarn_ctx *ctx, char *label);
+YARN_C99_DEF int yarn__find_instruction_point_for_label(yarn_dialogue *dialogue, char *label);
 
 /*
- * Resets the state of the context.
+ * Resets the state of the dialogue.
  */
-YARN_C99_DEF void yarn__reset_state(yarn_ctx *ctx);
+YARN_C99_DEF void yarn__reset_state(yarn_dialogue *dialogue);
 
 /*
  * get how many times the node has been visited.
  */
-YARN_C99_DEF int  yarn__get_visited_count(yarn_ctx *ctx, char *name);
+YARN_C99_DEF int  yarn__get_visited_count(yarn_dialogue *dialogue, char *name);
 
 /*
- * Asserts if the yarn ctx can be continued.
+ * Asserts if the yarn dialogue can be continued.
  */
-YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_ctx *ctx);
+YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
 #endif
 
 /*
@@ -360,11 +347,38 @@ YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_ctx *ctx);
 #if defined(YARN_C99_IMPLEMENTATION) && !defined(YARN_C99_INPLEMENT_COMPLETE)
 #define YARN_C99_INPLEMENT_COMPLETE
 
-yarn_functions *yarn_get_function_with_name(yarn_ctx *ctx, char *funcname) {
+/*
+ * Dynamic array stuff.
+ */
+
+#define YARN_MAKE_DYNARRAY(target, elemsize, cap, alloc_ctx) do { \
+    (target)->allocator = alloc_ctx;                   \
+    (target)->capacity  = cap;                         \
+    (target)->used      = 0;                           \
+    (target)->entries   = yarn_malloc(allocator, cap * elemsize); \
+} while(0)
+
+#define YARN_FREE_DYNARRAY(target) do { \
+    YARN_STATIC_ASSERT(sizeof(target) == (void *), pass_pointer_to_first_arg_instead_of_value);    \
+    yarn_free((target)->allocator, (target)->entries); \
+} while(0)
+
+#define YARN_DYNARR_APPEND(v, ent) do {                                           \
+  YARN_STATIC_ASSERT(sizeof((v)->entries[0]) == sizeof(ent), type_size_mismatch);              \
+  yarn__maybe_extend_dyn_array((void**)&((v)->entries), sizeof(ent),         \
+                               ((v)->used), &((v)->capacity), ((v)->allocator)); \
+  ((v)->entries)[((v)->used)++] = (ent);                                       \
+} while (0)
+
+/* Pops element, and assign it into "var". returns 0 if length == 0. */
+#define YARN_DYNARR_POP(v, var) (((v)->used > 0) ? ((var) = ((v)->entries)[--((v)->used)], 1) : 0)
+
+
+yarn_functions *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname) {
     size_t length = strlen(funcname);
 
-    for (int i = 0; i < ctx->library.used; ++i) {
-        yarn_functions *f = &ctx->library.entries[i];
+    for (int i = 0; i < dialogue->library.used; ++i) {
+        yarn_functions *f = &dialogue->library.entries[i];
         if (strncmp(f->name, funcname, length) == 0) {
             return f;
         }
@@ -442,22 +456,22 @@ int yarn_value_as_bool(yarn_value value) {
     return 0;
 }
 
-yarn_value yarn_pop_value(yarn_ctx *ctx) {
-    assert(ctx->stack_ptr > 0);
-    yarn_value v = ctx->stack[--ctx->stack_ptr];
+yarn_value yarn_pop_value(yarn_dialogue *dialogue) {
+    assert(dialogue->stack_ptr > 0);
+    yarn_value v = dialogue->stack[--dialogue->stack_ptr];
     return v;
 }
 
-void yarn_push_value(yarn_ctx *ctx, yarn_value value) {
-    assert(ctx->stack_ptr < YARN_LEN(ctx->stack));
-    ctx->stack[ctx->stack_ptr++] = value;
+void yarn_push_value(yarn_dialogue *dialogue, yarn_value value) {
+    assert(dialogue->stack_ptr < YARN_LEN(dialogue->stack));
+    dialogue->stack[dialogue->stack_ptr++] = value;
 }
 
-yarn_value yarn_load_variable(yarn_ctx *ctx, char *var_name) {
+yarn_value yarn_load_variable(yarn_dialogue *dialogue, char *var_name) {
     size_t length = strlen(var_name);
     uint32_t hash = yarn__hashstr(var_name, length);
-    for (int i = 0; i < ctx->variables.used; ++i) {
-        yarn_variable_entry e = ctx->variables.entries[i];
+    for (int i = 0; i < dialogue->variables.used; ++i) {
+        yarn_variable_entry e = dialogue->variables.entries[i];
 
         if (e.hash == hash && e.original_str_length == length) {
             /* TODO: Hope that it's not colliding and return variable */
@@ -468,12 +482,12 @@ yarn_value yarn_load_variable(yarn_ctx *ctx, char *var_name) {
     return yarn_none();
 }
 
-void yarn_store_variable(yarn_ctx *ctx, char *var_name, yarn_value value) {
+void yarn_store_variable(yarn_dialogue *dialogue, char *var_name, yarn_value value) {
     size_t length = strlen(var_name);
     uint32_t hash = yarn__hashstr(var_name, length);
 
-    for (int i = 0; i < ctx->variables.used; ++i) {
-        yarn_variable_entry *e = &ctx->variables.entries[i];
+    for (int i = 0; i < dialogue->variables.used; ++i) {
+        yarn_variable_entry *e = &dialogue->variables.entries[i];
 
         if (e->hash == hash && e->original_str_length == length) {
             e->value = value;
@@ -482,11 +496,12 @@ void yarn_store_variable(yarn_ctx *ctx, char *var_name, yarn_value value) {
     }
 
     /* variable does not exist: create new entry instead. */
-    yarn__maybe_extend_dyn_array((void**)&ctx->variables.entries, sizeof(ctx->variables.entries[0]), ctx->variables.used, &ctx->variables.capacity, ctx->alloc_ptr);
-    yarn_variable_entry *new_entry = &ctx->variables.entries[ctx->variables.used++];
-    new_entry->hash = hash;
-    new_entry->original_str_length = length;
-    new_entry->value = value;
+    yarn_variable_entry entry = {0};
+    entry.hash = hash;
+    entry.original_str_length = length;
+    entry.value = value;
+
+    YARN_DYNARR_APPEND(&dialogue->variables, entry);
 }
 
 /*
@@ -495,44 +510,44 @@ continues yarn VM and progresses it's dialogue.
 usage:
     ... when you want to progress yarn event...
 
-    int success = yarn_continue(ctx);
+    int success = yarn_continue(dialogue);
     if (!success) {
         something happened here.
     }
 
     ...
 */
-int yarn_continue(yarn_ctx *ctx) {
-    yarn__check_if_i_can_continue(ctx);
+int yarn_continue(yarn_dialogue *dialogue) {
+    yarn__check_if_i_can_continue(dialogue);
 
-    if (ctx->execution_state == YARN_EXEC_RUNNING) {
+    if (dialogue->execution_state == YARN_EXEC_RUNNING) {
         /* cannot continue already running VM. */
         return 0;
     }
 
-    if (ctx->execution_state == YARN_EXEC_DELIVERING_CONTENT) {
+    if (dialogue->execution_state == YARN_EXEC_DELIVERING_CONTENT) {
         /* Client called continue after delivering content.
          * set execution_state back, and bail out --
          * it's likely that we're inside delegate. */
-        ctx->execution_state = YARN_EXEC_RUNNING;
+        dialogue->execution_state = YARN_EXEC_RUNNING;
         return 0;
     }
 
-    ctx->execution_state = YARN_EXEC_RUNNING;
+    dialogue->execution_state = YARN_EXEC_RUNNING;
 
-    while(ctx->execution_state == YARN_EXEC_RUNNING) {
-        Yarn__Node *node = ctx->program->nodes[ctx->current_node]->value;
-        Yarn__Instruction *instr = node->instructions[ctx->current_instruction];
+    while(dialogue->execution_state == YARN_EXEC_RUNNING) {
+        Yarn__Node *node = dialogue->program->nodes[dialogue->current_node]->value;
+        Yarn__Instruction *instr = node->instructions[dialogue->current_instruction];
 
-        yarn__run_instruction(ctx, instr);
-        ctx->current_instruction++;
+        yarn__run_instruction(dialogue, instr);
+        dialogue->current_instruction++;
 
-        if (ctx->current_instruction > node->n_instructions) {
-            ctx->delegates.node_complete_handler(ctx);
-            ctx->execution_state = YARN_EXEC_STOPPED;
-            yarn__reset_state(ctx); /* original version has a setter that resets VM state when operation stops. */
+        if (dialogue->current_instruction > node->n_instructions) {
+            dialogue->delegates.node_complete_handler(dialogue);
+            dialogue->execution_state = YARN_EXEC_STOPPED;
+            yarn__reset_state(dialogue); /* original version has a setter that resets VM state when operation stops. */
 
-            ctx->delegates.dialogue_complete_handler(ctx);
+            dialogue->delegates.dialogue_complete_handler(dialogue);
             /* TODO: log message */
         }
     }
@@ -540,17 +555,16 @@ int yarn_continue(yarn_ctx *ctx) {
     return 0;
 }
 
-int yarn_set_node(yarn_ctx *ctx, char *node_name) {
-    assert(ctx->program && ctx->program->n_nodes > 0);
-
+int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
+    assert(dialogue->program && dialogue->program->n_nodes > 0);
     size_t length = strlen(node_name);
     int index = -1;
 
     Yarn__Node *node = 0;
-    for (int i = 0; i < ctx->program->n_nodes; ++i) {
-        if (strncmp(ctx->program->nodes[i]->key, node_name, length) == 0) {
+    for (int i = 0; i < dialogue->program->n_nodes; ++i) {
+        if (strncmp(dialogue->program->nodes[i]->key, node_name, length) == 0) {
             index = i;
-            node = ctx->program->nodes[i]->value;
+            node = dialogue->program->nodes[i]->value;
             break;
         }
     }
@@ -560,13 +574,13 @@ int yarn_set_node(yarn_ctx *ctx, char *node_name) {
         assert(0);
     }
 
-    yarn__reset_state(ctx);
-    ctx->current_node = index;
+    yarn__reset_state(dialogue);
+    dialogue->current_node = index;
 
-    if (ctx->delegates.node_start_handler) {
-        ctx->delegates.node_start_handler(ctx);
-        if (ctx->delegates.prepare_for_lines_handler) {
-            char **ids = yarn_malloc(ctx->alloc_ptr, sizeof(void *) * node->n_instructions);
+    if (dialogue->delegates.node_start_handler) {
+        dialogue->delegates.node_start_handler(dialogue);
+        if (dialogue->delegates.prepare_for_lines_handler) {
+            char **ids = yarn_malloc(dialogue->alloc_ptr, sizeof(void *) * node->n_instructions);
             int n_ids = 0;
             for (int i = 0; i < node->n_instructions; ++i) {
                 Yarn__Instruction *inst = node->instructions[i];
@@ -577,105 +591,107 @@ int yarn_set_node(yarn_ctx *ctx, char *node_name) {
                 }
 
             }
-            ctx->delegates.prepare_for_lines_handler(ctx, ids, n_ids);
-            yarn_free(ctx->alloc_ptr, ids);
+            dialogue->delegates.prepare_for_lines_handler(dialogue, ids, n_ids);
+            yarn_free(dialogue->alloc_ptr, ids);
         }
     }
 
-    return ctx->current_node;
+    return dialogue->current_node;
 }
 
-int yarn_select_option(yarn_ctx *ctx, int select_option) {
-    if (ctx->execution_state != YARN_EXEC_WAITING_OPTION_SELECTION) {
+int yarn_select_option(yarn_dialogue *dialogue, int select_option) {
+    if (dialogue->execution_state != YARN_EXEC_WAITING_OPTION_SELECTION) {
         return 0;
     }
 
-    if (ctx->current_options.used < (size_t)select_option || select_option < 0) {
+    if (dialogue->current_options.used < (size_t)select_option || select_option < 0) {
         return 0;
     }
 
-    yarn_option selected = ctx->current_options.entries[select_option];
-    yarn_push_value(ctx, yarn_string(selected.destination_node));
+    yarn_option selected = dialogue->current_options.entries[select_option];
+    yarn_push_value(dialogue, yarn_string(selected.destination_node));
 
-    for (int i = 0; i < ctx->current_options.used; ++i) {
-        yarn_option opt = ctx->current_options.entries[i];
+    for (int i = 0; i < dialogue->current_options.used; ++i) {
+        yarn_option opt = dialogue->current_options.entries[i];
         if (opt.line.n_substitutions > 0) {
-            yarn_free(ctx->alloc_ptr, opt.line.substitutions);
+            yarn_free(dialogue->alloc_ptr, opt.line.substitutions);
         }
     }
 
-    ctx->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
-    ctx->current_options.used = 0;
+    dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
+    dialogue->current_options.used = 0;
     return 1;
 }
 
-yarn_ctx *yarn_create_context_heap() {
-    yarn_ctx *ctx = yarn_malloc(ctx->alloc_ptr, sizeof(yarn_ctx));
-    ctx->program           = 0;
+yarn_dialogue *yarn_create_dialogue_heap(void *allocation_context) {
+    yarn_dialogue *dialogue = yarn_malloc(allocation_context, sizeof(yarn_dialogue));
+    dialogue->program       = 0;
+    dialogue->alloc_ptr     = allocation_context;
 
-    ctx->strings.used     = 0;
-    ctx->strings.capacity = 512;
-    ctx->strings.entries    = yarn_malloc(ctx->alloc_ptr, sizeof(yarn_string_line) * 512);
 
-    /* NOTE: it's fine as long as I don't put float or something into yarn_string_line. */
-    memset(ctx->strings.entries, 0, sizeof(yarn_string_line) * 512);
+    dialogue->strings.used     = 0;
+    dialogue->strings.capacity = 512;
+    dialogue->strings.entries    = yarn_malloc(dialogue->alloc_ptr, sizeof(yarn_parsed_entry) * 512);
 
-    ctx->execution_state = YARN_EXEC_STOPPED;
-    ctx->delegates.line_handler              = &yarn__stub_line_handler;
-    ctx->delegates.option_handler            = &yarn__stub_option_handler;
-    ctx->delegates.command_handler           = &yarn__stub_command_handler;
-    ctx->delegates.node_start_handler        = &yarn__stub_node_start_handler;
-    ctx->delegates.node_complete_handler     = &yarn__stub_node_complete_handler;
-    ctx->delegates.dialogue_complete_handler = &yarn__stub_dialogue_complete_handler;
-    ctx->delegates.prepare_for_lines_handler = &yarn__stub_prepare_for_lines_handler;
+    /* NOTE: it's fine as long as I don't put float or something into yarn_parsed_entry. */
+    memset(dialogue->strings.entries, 0, sizeof(yarn_parsed_entry) * 512);
 
-    ctx->stack_ptr = 0;
-    memset(ctx->stack, 0, sizeof(yarn_value) * YARN_STACK_CAPACITY);
+    dialogue->execution_state = YARN_EXEC_STOPPED;
+    dialogue->delegates.line_handler              = &yarn__stub_line_handler;
+    dialogue->delegates.option_handler            = &yarn__stub_option_handler;
+    dialogue->delegates.command_handler           = &yarn__stub_command_handler;
+    dialogue->delegates.node_start_handler        = &yarn__stub_node_start_handler;
+    dialogue->delegates.node_complete_handler     = &yarn__stub_node_complete_handler;
+    dialogue->delegates.dialogue_complete_handler = &yarn__stub_dialogue_complete_handler;
+    dialogue->delegates.prepare_for_lines_handler = &yarn__stub_prepare_for_lines_handler;
 
-    ctx->current_node = 0;
-    ctx->current_instruction = 0;
+    dialogue->stack_ptr = 0;
+    memset(dialogue->stack, 0, sizeof(yarn_value) * YARN_STACK_CAPACITY);
 
-    ctx->library.used      = 0;
-    ctx->library.capacity  = 32;
-    ctx->library.entries = yarn_malloc(ctx->alloc_ptr, sizeof(yarn_functions) * 32);
+    dialogue->current_node = 0;
+    dialogue->current_instruction = 0;
 
-    ctx->variables.used      = 0;
-    ctx->variables.capacity  = 32;
-    ctx->variables.entries = yarn_malloc(ctx->alloc_ptr, sizeof(yarn_variable_entry) * 32);
+    dialogue->library.used      = 0;
+    dialogue->library.capacity  = 32;
+    dialogue->library.entries = yarn_malloc(dialogue->alloc_ptr, sizeof(yarn_functions) * 32);
 
-    ctx->current_options.used     = 0;
-    ctx->current_options.capacity = 32;
-    ctx->current_options.entries  = yarn_malloc(ctx->alloc_ptr, sizeof(yarn_option) * 32);
+    dialogue->variables.used      = 0;
+    dialogue->variables.capacity  = 32;
+    dialogue->variables.entries = yarn_malloc(dialogue->alloc_ptr, sizeof(yarn_variable_entry) * 32);
 
-    yarn_load_functions(ctx, yarn__standard_libs);
-    return ctx;
+    dialogue->current_options.used     = 0;
+    dialogue->current_options.capacity = 32;
+    dialogue->current_options.entries  = yarn_malloc(dialogue->alloc_ptr, sizeof(yarn_option) * 32);
+
+    yarn_load_functions(dialogue, yarn__standard_libs);
+    return dialogue;
 }
 
-void yarn_destroy_context(yarn_ctx *ctx) {
-    if (ctx->program)
-        yarn__program__free_unpacked(ctx->program, 0); /* TODO: @allocator */
+void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
+    if (dialogue->program)
+        yarn__program__free_unpacked(dialogue->program, 0); /* TODO: @allocator */
 
-    for(size_t i = 0; i < ctx->strings.used; ++i) {
-        yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].id);
-        yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].text);
-        yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].file);
-        yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].node);
+    for(size_t i = 0; i < dialogue->strings.used; ++i) {
+        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].id);
+        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].text);
+        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].file);
+        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].node);
     }
 
-    for (size_t i = 0; i < ctx->current_options.used; ++i) {
-        if (ctx->current_options.entries[i].line.n_substitutions > 0) {
-            yarn_free(ctx->alloc_ptr, ctx->current_options.entries[i].line.substitutions);
+    for (size_t i = 0; i < dialogue->current_options.used; ++i) {
+        if (dialogue->current_options.entries[i].line.n_substitutions > 0) {
+            yarn_free(dialogue->alloc_ptr, dialogue->current_options.entries[i].line.substitutions);
         }
     }
 
-    yarn_free(ctx->alloc_ptr, ctx->current_options.entries);
-    yarn_free(ctx->alloc_ptr, ctx->variables.entries);
-    yarn_free(ctx->alloc_ptr, ctx->library.entries);
-    yarn_free(ctx->alloc_ptr, ctx->strings.entries);
-    yarn_free(ctx->alloc_ptr, ctx);
+    yarn_free(dialogue->alloc_ptr, dialogue->current_options.entries);
+    yarn_free(dialogue->alloc_ptr, dialogue->variables.entries);
+    yarn_free(dialogue->alloc_ptr, dialogue->library.entries);
+    yarn_free(dialogue->alloc_ptr, dialogue->strings.entries);
+    yarn_free(dialogue->alloc_ptr, dialogue);
 }
 
-int yarn_load_functions(yarn_ctx *ctx, yarn_functions *loading_functions) {
+int yarn_load_functions(yarn_dialogue *dialogue, yarn_functions *loading_functions) {
     assert(loading_functions);
     int inserted = 0;
 
@@ -693,37 +709,36 @@ int yarn_load_functions(yarn_ctx *ctx, yarn_functions *loading_functions) {
          */
 
         size_t length = strlen(f.name);
-        for (int x = 0; x < ctx->library.used; ++x) {
-            if (strncmp(f.name, ctx->library.entries[x].name, length) == 0) {
+        for (int x = 0; x < dialogue->library.used; ++x) {
+            if (strncmp(f.name, dialogue->library.entries[x].name, length) == 0) {
                 assert(0 && "Multiple declaration of same function");
             }
         }
 
-        yarn__maybe_extend_dyn_array((void**)&ctx->library.entries, sizeof(yarn_functions), ctx->library.used, &ctx->library.capacity, ctx->alloc_ptr);
-        ctx->library.entries[ctx->library.used++] = f;
-        inserted ++;
+        YARN_DYNARR_APPEND(&dialogue->library, f);
+        inserted++;
     }
 
     return inserted;
 }
 
 int yarn_load_program(
-    yarn_ctx *ctx,
+    yarn_dialogue *dialogue,
     void *program_buffer,
     size_t program_length,
     void *string_table_buffer,
     size_t string_table_length)
 {
-    if(ctx->program != 0) {
-        yarn__program__free_unpacked(ctx->program, 0); /* TODO: @allocator */
+    if(dialogue->program != 0) {
+        yarn__program__free_unpacked(dialogue->program, 0); /* TODO: @allocator */
     }
 
-    ctx->program = yarn__program__unpack(
+    dialogue->program = yarn__program__unpack(
         0, /* TODO: @allocator */
         program_length,
         program_buffer);
 
-    int r = yarn__load_string_table(ctx, string_table_buffer, string_table_length);
+    int r = yarn__load_string_table(dialogue, string_table_buffer, string_table_length);
     assert(r > 0);
     return 1;
 }
@@ -735,45 +750,48 @@ int yarn_load_program(
  * ====================================================
  * */
 
+/* for when I'm parsing stuff */
+typedef YARN_DYN_ARRAY(char)  yarn__str_builder;
+
 /* ===========================================
  * Stub delegates.
  */
 
-void yarn__stub_line_handler(yarn_ctx *ctx, yarn_line *line) {
+void yarn__stub_line_handler(yarn_dialogue *dialogue, yarn_line *line) {
     printf("Stub: line handler called\n");
     printf("  line ID: %s\n", line->id);
     printf("  line Subst count: %d\n", line->n_substitutions);
 
-    yarn_continue(ctx);
+    yarn_continue(dialogue);
 }
 
-void yarn__stub_option_handler(yarn_ctx *ctx, yarn_option *options, int options_count) {
+void yarn__stub_option_handler(yarn_dialogue *dialogue, yarn_option *options, int options_count) {
     printf("Stub: option handler called\n");
     printf("  options count: %d\n", options_count);
 
-    yarn_select_option(ctx, 0);
+    yarn_select_option(dialogue, 0);
 }
 
-void yarn__stub_command_handler(yarn_ctx *ctx, char *command) {
+void yarn__stub_command_handler(yarn_dialogue *dialogue, char *command) {
     printf("Stub: command handler called\n");
     printf("  command: %s\n", command);
 
-    yarn_continue(ctx);
+    yarn_continue(dialogue);
 }
 
-void yarn__stub_node_start_handler(yarn_ctx *ctx) {
+void yarn__stub_node_start_handler(yarn_dialogue *dialogue) {
     printf("Stub: node start handler called\n");
 }
 
-void yarn__stub_node_complete_handler(yarn_ctx *ctx) {
+void yarn__stub_node_complete_handler(yarn_dialogue *dialogue) {
     printf("Stub: node complete handler called\n");
 }
 
-void yarn__stub_dialogue_complete_handler(yarn_ctx *ctx) {
+void yarn__stub_dialogue_complete_handler(yarn_dialogue *dialogue) {
     printf("Stub: dialogue complete handler called\n");
 }
 
-void yarn__stub_prepare_for_lines_handler(yarn_ctx *ctx, char **ids, int ids_count) {
+void yarn__stub_prepare_for_lines_handler(yarn_dialogue *dialogue, char **ids, int ids_count) {
     printf("Stub: prepare for line handler called\n");
     for (int i = 0; i < ids_count; ++i) {
         printf(" prepare line id %d: %s\n", i, ids[i]);
@@ -819,61 +837,61 @@ int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size
  * Standard libraries.
  */
 
-yarn_value yarn__number_multiply(yarn_ctx *ctx) {
-    float right = yarn_value_as_float(yarn_pop_value(ctx));
-    float left  = yarn_value_as_float(yarn_pop_value(ctx));
+yarn_value yarn__number_multiply(yarn_dialogue *dialogue) {
+    float right = yarn_value_as_float(yarn_pop_value(dialogue));
+    float left  = yarn_value_as_float(yarn_pop_value(dialogue));
 
     return yarn_float(left * right);
 }
 
-yarn_value yarn__number_divide(yarn_ctx *ctx) {
-    float right = yarn_value_as_float(yarn_pop_value(ctx));
-    float left  = yarn_value_as_float(yarn_pop_value(ctx));
+yarn_value yarn__number_divide(yarn_dialogue *dialogue) {
+    float right = yarn_value_as_float(yarn_pop_value(dialogue));
+    float left  = yarn_value_as_float(yarn_pop_value(dialogue));
 
     assert(left != 0.0 && "Division by zero!!!!!!!!");
     return yarn_float(left / right);
 }
 
-yarn_value yarn__number_add(yarn_ctx *ctx) {
-    float right = yarn_value_as_float(yarn_pop_value(ctx));
-    float left  = yarn_value_as_float(yarn_pop_value(ctx));
+yarn_value yarn__number_add(yarn_dialogue *dialogue) {
+    float right = yarn_value_as_float(yarn_pop_value(dialogue));
+    float left  = yarn_value_as_float(yarn_pop_value(dialogue));
 
     return yarn_float(left + right);
 }
 
-yarn_value yarn__number_sub(yarn_ctx *ctx) {
-    float right = yarn_value_as_float(yarn_pop_value(ctx));
-    float left  = yarn_value_as_float(yarn_pop_value(ctx));
+yarn_value yarn__number_sub(yarn_dialogue *dialogue) {
+    float right = yarn_value_as_float(yarn_pop_value(dialogue));
+    float left  = yarn_value_as_float(yarn_pop_value(dialogue));
 
     return yarn_float(left - right);
 }
 
 #define YARN__FLOAT_EPSILON 0.00001
-yarn_value yarn__number_eq(yarn_ctx *ctx) {
-    float right = yarn_value_as_float(yarn_pop_value(ctx));
-    float left  = yarn_value_as_float(yarn_pop_value(ctx));
+yarn_value yarn__number_eq(yarn_dialogue *dialogue) {
+    float right = yarn_value_as_float(yarn_pop_value(dialogue));
+    float left  = yarn_value_as_float(yarn_pop_value(dialogue));
 
     float e = (right > left ? right : left) - (right > left ? left : right);
     e = (e < 0.0 ? -e : e);
     return yarn_bool(e <= YARN__FLOAT_EPSILON);
 }
 
-yarn_value yarn__bool_eq(yarn_ctx *ctx) {
-    int right = yarn_value_as_bool(yarn_pop_value(ctx));
-    int left  = yarn_value_as_bool(yarn_pop_value(ctx));
+yarn_value yarn__bool_eq(yarn_dialogue *dialogue) {
+    int right = yarn_value_as_bool(yarn_pop_value(dialogue));
+    int left  = yarn_value_as_bool(yarn_pop_value(dialogue));
     return yarn_bool(left == right);
 }
 
-yarn_value yarn__visited(yarn_ctx *ctx) {
-    char *node_name = yarn_value_as_string(yarn_pop_value(ctx));
+yarn_value yarn__visited(yarn_dialogue *dialogue) {
+    char *node_name = yarn_value_as_string(yarn_pop_value(dialogue));
 
-    return yarn_bool(yarn__get_visited_count(ctx, node_name) > 0);
+    return yarn_bool(yarn__get_visited_count(dialogue, node_name) > 0);
 }
 
-yarn_value yarn__visited_count(yarn_ctx *ctx) {
-    char *node_name = yarn_value_as_string(yarn_pop_value(ctx));
+yarn_value yarn__visited_count(yarn_dialogue *dialogue) {
+    char *node_name = yarn_value_as_string(yarn_pop_value(dialogue));
 
-    return yarn_int(yarn__get_visited_count(ctx, node_name));
+    return yarn_int(yarn__get_visited_count(dialogue, node_name));
 }
 
 yarn_functions yarn__standard_libs[] = {
@@ -896,22 +914,22 @@ yarn_functions yarn__standard_libs[] = {
  * Yarn VM functions.
  */
 
-void yarn__check_if_i_can_continue(yarn_ctx *ctx) {
-    assert(ctx->program);
-    assert(ctx->program->n_nodes > ctx->current_node && ctx->current_node >= 0);
-    assert(ctx->program->nodes[ctx->current_node]->value);
-    assert(ctx->program->nodes[ctx->current_node]->value->n_instructions > ctx->current_instruction && ctx->current_instruction >= 0);
+void yarn__check_if_i_can_continue(yarn_dialogue *dialogue) {
+    assert(dialogue->program);
+    assert(dialogue->program->n_nodes > dialogue->current_node && dialogue->current_node >= 0);
+    assert(dialogue->program->nodes[dialogue->current_node]->value);
+    assert(dialogue->program->nodes[dialogue->current_node]->value->n_instructions > dialogue->current_instruction && dialogue->current_instruction >= 0);
 
-    assert(ctx->delegates.line_handler);
-    assert(ctx->delegates.option_handler);
-    assert(ctx->delegates.command_handler);
-    assert(ctx->delegates.node_start_handler);
-    assert(ctx->delegates.node_complete_handler);
-    assert(ctx->delegates.dialogue_complete_handler);
-    assert(ctx->delegates.prepare_for_lines_handler);
+    assert(dialogue->delegates.line_handler);
+    assert(dialogue->delegates.option_handler);
+    assert(dialogue->delegates.command_handler);
+    assert(dialogue->delegates.node_start_handler);
+    assert(dialogue->delegates.node_complete_handler);
+    assert(dialogue->delegates.dialogue_complete_handler);
+    assert(dialogue->delegates.prepare_for_lines_handler);
 }
 
-int yarn__get_visited_count(yarn_ctx *ctx, char *name) {
+int yarn__get_visited_count(yarn_dialogue *dialogue, char *name) {
     static char internal_node_name[1024] = {0};
     memset(internal_node_name, 0, sizeof(internal_node_name));
 
@@ -920,23 +938,23 @@ int yarn__get_visited_count(yarn_ctx *ctx, char *name) {
     snprintf(internal_node_name, sizeof(internal_node_name) - 1,
              "[+INTERNAL+]_visited_count_for_%s", name);
 
-    yarn_value v = yarn_load_variable(ctx, internal_node_name);
+    yarn_value v = yarn_load_variable(dialogue, internal_node_name);
     if (v.type == YARN_VALUE_NONE) {
-        yarn_store_variable(ctx, internal_node_name, yarn_int(0));
+        yarn_store_variable(dialogue, internal_node_name, yarn_int(0));
         return 0;
     }
 
     return yarn_value_as_int(v);
 }
 
-void yarn__reset_state(yarn_ctx *ctx) {
-    ctx->stack_ptr = 0;
-    ctx->current_instruction = 0;
-    ctx->current_node = 0;
+void yarn__reset_state(yarn_dialogue *dialogue) {
+    dialogue->stack_ptr = 0;
+    dialogue->current_instruction = 0;
+    dialogue->current_node = 0;
 }
 
-int yarn__find_instruction_point_for_label(yarn_ctx *ctx, char *label) {
-    Yarn__Node *node = ctx->program->nodes[ctx->current_node]->value;
+int yarn__find_instruction_point_for_label(yarn_dialogue *dialogue, char *label) {
+    Yarn__Node *node = dialogue->program->nodes[dialogue->current_node]->value;
     size_t strlength = strlen(label);
     for (int i = 0; i < node->n_labels; ++i) {
         Yarn__Node__LabelsEntry *entry = node->labels[i];
@@ -948,16 +966,15 @@ int yarn__find_instruction_point_for_label(yarn_ctx *ctx, char *label) {
     return -1;
 }
 
-void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
-    printf("running opcode: %d\n", inst->opcode);
+void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
     switch(inst->opcode) {
         case YARN__INSTRUCTION__OP_CODE__STORE_VARIABLE:
         {
             assert(inst->n_operands >= 1);
-            yarn_value v = ctx->stack[ctx->stack_ptr - 1];
+            yarn_value v = dialogue->stack[dialogue->stack_ptr - 1];
             char *varname = inst->operands[0]->string_value;
 
-            yarn_store_variable(ctx, varname, v);
+            yarn_store_variable(dialogue, varname, v);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__PUSH_VARIABLE:
@@ -965,12 +982,12 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
             assert(inst->n_operands >= 1);
             char *varname = inst->operands[0]->string_value;
 
-            yarn_value v = yarn_load_variable(ctx, varname);
+            yarn_value v = yarn_load_variable(dialogue, varname);
             if (v.type == YARN_VALUE_NONE) {
                 size_t varname_length = strlen(varname);
                 uint32_t varname_hash = yarn__hashstr(varname, varname_length);
-                for (int i = 0; i < ctx->program->n_initial_values; ++i) {
-                    Yarn__Program__InitialValuesEntry *iv = ctx->program->initial_values[i];
+                for (int i = 0; i < dialogue->program->n_initial_values; ++i) {
+                    Yarn__Program__InitialValuesEntry *iv = dialogue->program->initial_values[i];
                     size_t str_length = strlen(iv->key);
                     uint32_t hash = yarn__hashstr(iv->key, str_length);
 
@@ -1001,31 +1018,31 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
                 printf("Variable %s undefined.\n", varname);
                 assert(0);
             } else {
-                yarn_push_value(ctx, v);
+                yarn_push_value(dialogue, v);
             }
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__STOP:
         {
-            ctx->delegates.node_complete_handler(ctx);
-            ctx->delegates.dialogue_complete_handler(ctx);
+            dialogue->delegates.node_complete_handler(dialogue);
+            dialogue->delegates.dialogue_complete_handler(dialogue);
 
-            ctx->execution_state = YARN_EXEC_STOPPED;
+            dialogue->execution_state = YARN_EXEC_STOPPED;
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__RUN_NODE:
         {
-            yarn_value value = yarn_pop_value(ctx);
+            yarn_value value = yarn_pop_value(dialogue);
             char *node_name = yarn_value_as_string(value);
-            ctx->delegates.node_complete_handler(ctx);
+            dialogue->delegates.node_complete_handler(dialogue);
 
-            yarn_set_node(ctx, node_name);
-            ctx->current_instruction -= 1;
+            yarn_set_node(dialogue, node_name);
+            dialogue->current_instruction -= 1;
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__POP:
         {
-            yarn_pop_value(ctx);
+            yarn_pop_value(dialogue);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__PUSH_NULL:
@@ -1047,44 +1064,44 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore UB */
                 if (expr_count > 0) {
                     /* TODO: @malloc stack allocator would work wonderfully here */
-                    char **substitutions = yarn_malloc(ctx->alloc_ptr, sizeof(char *) * expr_count);
+                    char **substitutions = yarn_malloc(dialogue->alloc_ptr, sizeof(char *) * expr_count);
                     n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
-                        yarn_value value = yarn_pop_value(ctx);
+                        yarn_value value = yarn_pop_value(dialogue);
                         char *subst = yarn_value_as_string(value);
                         substitutions[i] = subst;
                     }
 
-                    command_text = yarn__substitute_string(command_text, substitutions, n_substitutions, ctx->alloc_ptr);
+                    command_text = yarn__substitute_string(command_text, substitutions, n_substitutions, dialogue->alloc_ptr);
                 }
             }
 
-            ctx->execution_state = YARN_EXEC_DELIVERING_CONTENT;
-            ctx->delegates.command_handler(ctx, command_text);
+            dialogue->execution_state = YARN_EXEC_DELIVERING_CONTENT;
+            dialogue->delegates.command_handler(dialogue, command_text);
 
-            if (ctx->execution_state == YARN_EXEC_DELIVERING_CONTENT) {
-                ctx->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
+            if (dialogue->execution_state == YARN_EXEC_DELIVERING_CONTENT) {
+                dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
             }
 
-            if (n_substitutions > 0) yarn_free(ctx->alloc_ptr, command_text);
+            if (n_substitutions > 0) yarn_free(dialogue->alloc_ptr, command_text);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__JUMP:
         {
-            assert(ctx->stack[ctx->stack_ptr - 1].type == YARN_VALUE_STRING);
+            assert(dialogue->stack[dialogue->stack_ptr - 1].type == YARN_VALUE_STRING);
 
-            char *label = ctx->stack[ctx->stack_ptr - 1].values.v_string;
-            ctx->current_instruction = yarn__find_instruction_point_for_label(ctx, label) - 1;
+            char *label = dialogue->stack[dialogue->stack_ptr - 1].values.v_string;
+            dialogue->current_instruction = yarn__find_instruction_point_for_label(dialogue, label) - 1;
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__JUMP_IF_FALSE:
         {
-            int b = yarn_value_as_bool(ctx->stack[ctx->stack_ptr - 1]);
+            int b = yarn_value_as_bool(dialogue->stack[dialogue->stack_ptr - 1]);
             if (!b) {
                 assert(inst->n_operands >= 1);
                 char *label = inst->operands[0]->string_value;
-                ctx->current_instruction = yarn__find_instruction_point_for_label(ctx, label) - 1;
+                dialogue->current_instruction = yarn__find_instruction_point_for_label(dialogue, label) - 1;
             }
         } break;
 
@@ -1092,7 +1109,7 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
         {
             assert(inst->n_operands >= 1);
             char *label = inst->operands[0]->string_value;
-            ctx->current_instruction = yarn__find_instruction_point_for_label(ctx, label) - 1;
+            dialogue->current_instruction = yarn__find_instruction_point_for_label(dialogue, label) - 1;
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__ADD_OPTION:
@@ -1111,11 +1128,11 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore UB */
                 if (expr_count > 0) {
                     /* TODO: @malloc stack allocator would work wonderfully here */
-                    option.line.substitutions = yarn_malloc(ctx->alloc_ptr, sizeof(char *) * expr_count);
+                    option.line.substitutions = yarn_malloc(dialogue->alloc_ptr, sizeof(char *) * expr_count);
                     option.line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
-                        yarn_value value = yarn_pop_value(ctx);
+                        yarn_value value = yarn_pop_value(dialogue);
                         char *subst = yarn_value_as_string(value);
                         option.line.substitutions[i] = subst;
                     }
@@ -1124,35 +1141,34 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
             if (inst->n_operands > 3) {
                 int has_line_condition = inst->operands[3]->bool_value;
                 if (has_line_condition) {
-                    option.is_available = yarn_value_as_bool(yarn_pop_value(ctx));
+                    option.is_available = yarn_value_as_bool(yarn_pop_value(dialogue));
                 }
             } else {
                 option.is_available = 1; /* Maybe? */
             }
 
-            yarn__maybe_extend_dyn_array((void**)&ctx->current_options.entries, sizeof(yarn_option), ctx->current_options.used, &ctx->current_options.capacity, ctx->alloc_ptr);
-            option.id = (int)ctx->current_options.used;
-            ctx->current_options.entries[ctx->current_options.used++] = option;
+            option.id = (int)dialogue->current_options.used;
+            YARN_DYNARR_APPEND(&dialogue->current_options, option);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__SHOW_OPTIONS:
         {
-            if (ctx->current_options.used == 0) {
-                ctx->execution_state = YARN_EXEC_STOPPED;
-                yarn__reset_state(ctx);
-                ctx->delegates.dialogue_complete_handler(ctx);
+            if (dialogue->current_options.used == 0) {
+                dialogue->execution_state = YARN_EXEC_STOPPED;
+                yarn__reset_state(dialogue);
+                dialogue->delegates.dialogue_complete_handler(dialogue);
                 break;
             }
 
             /* TODO: C# implementation copies the content of current option.
              *  I wonder why? */
 
-            ctx->execution_state = YARN_EXEC_WAITING_OPTION_SELECTION;
-            ctx->delegates.option_handler(ctx, ctx->current_options.entries, (int)ctx->current_options.used);
+            dialogue->execution_state = YARN_EXEC_WAITING_OPTION_SELECTION;
+            dialogue->delegates.option_handler(dialogue, dialogue->current_options.entries, (int)dialogue->current_options.used);
 
             /* TODO: @Leak when to free this thing? */
-            if (ctx->execution_state == YARN_EXEC_WAITING_FOR_CONTINUE) {
-                ctx->execution_state = YARN_EXEC_RUNNING;
+            if (dialogue->execution_state == YARN_EXEC_WAITING_FOR_CONTINUE) {
+                dialogue->execution_state = YARN_EXEC_RUNNING;
             }
         } break;
 
@@ -1175,25 +1191,25 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
 
                 if (expr_count > 0) {
                     /* TODO: @malloc stack allocator would work wonderfully here */
-                    line.substitutions = yarn_malloc(ctx->alloc_ptr, sizeof(char *) * expr_count);
+                    line.substitutions = yarn_malloc(dialogue->alloc_ptr, sizeof(char *) * expr_count);
                     line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
-                        yarn_value value = yarn_pop_value(ctx);
+                        yarn_value value = yarn_pop_value(dialogue);
                         char *subst = yarn_value_as_string(value);
                         line.substitutions[i] = subst;
                     }
                 }
             }
 
-            ctx->execution_state = YARN_EXEC_DELIVERING_CONTENT;
-            ctx->delegates.line_handler(ctx, &line);
+            dialogue->execution_state = YARN_EXEC_DELIVERING_CONTENT;
+            dialogue->delegates.line_handler(dialogue, &line);
 
-            if (ctx->execution_state == YARN_EXEC_DELIVERING_CONTENT) {
-                ctx->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
+            if (dialogue->execution_state == YARN_EXEC_DELIVERING_CONTENT) {
+                dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
             }
 
-            if (line.substitutions) yarn_free(ctx->alloc_ptr, line.substitutions);
+            if (line.substitutions) yarn_free(dialogue->alloc_ptr, line.substitutions);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__PUSH_STRING:
@@ -1201,7 +1217,7 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
             yarn_value v = { 0 };
             v.type            = YARN_VALUE_STRING;
             v.values.v_string = inst->operands[0]->string_value;
-            yarn_push_value(ctx, v);
+            yarn_push_value(dialogue, v);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__PUSH_BOOL:
@@ -1209,7 +1225,7 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
             yarn_value v = { 0 };
             v.type          = YARN_VALUE_BOOL;
             v.values.v_bool = !!inst->operands[0]->bool_value;
-            yarn_push_value(ctx, v);
+            yarn_push_value(dialogue, v);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__PUSH_FLOAT:
@@ -1217,7 +1233,7 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
             yarn_value v = { 0 };
             v.type           = YARN_VALUE_FLOAT;
             v.values.v_float = inst->operands[0]->float_value;
-            yarn_push_value(ctx, v);
+            yarn_push_value(dialogue, v);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__CALL_FUNC:
@@ -1227,9 +1243,9 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
             Yarn__Operand *key_operand = inst->operands[0];
             assert(key_operand->value_case == YARN__OPERAND__VALUE_STRING_VALUE);
 
-            int actual_params = yarn_value_as_int(yarn_pop_value(ctx));
+            int actual_params = yarn_value_as_int(yarn_pop_value(dialogue));
             char *func_name = key_operand->string_value;
-            yarn_functions *func = yarn_get_function_with_name(ctx, func_name);
+            yarn_functions *func = yarn_get_function_with_name(dialogue, func_name);
             if (!func) {
                 printf("Function named `%s`(param count %d) does not exist.\n", func_name, actual_params);
                 assert(0);
@@ -1252,15 +1268,15 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
              *  I swap stack pointer to amount of parameter passed temporarily.
              *  this way user receives an error (or crashes) when they try to pop more than they're intended.
              */
-            int expect_stack_position = ctx->stack_ptr - expect_params;
+            int expect_stack_position = dialogue->stack_ptr - expect_params;
 
             /* TODO: what if user allocates string here and return it?
              * who holds ownership to that pointer ? */
-            yarn_value value = func->function(ctx);
-            assert(expect_stack_position == ctx->stack_ptr);
+            yarn_value value = func->function(dialogue);
+            assert(expect_stack_position == dialogue->stack_ptr);
 
             if (value.type != YARN_VALUE_NONE) {
-                yarn_push_value(ctx, value);
+                yarn_push_value(dialogue, value);
             }
         } break;
 
@@ -1275,19 +1291,15 @@ void yarn__run_instruction(yarn_ctx *ctx, Yarn__Instruction *inst) {
 /* NOTE: returns malloc'ed string. */
 char *yarn__substitute_string(char *format, char **substs, int n_substs, void *alloc_ptr) {
     size_t base_strlen = strlen(format);
+    size_t memory_size = base_strlen + (base_strlen & 16); /* Align to 16 */
 
-    size_t digit = 1;
-
-    char *str = yarn_malloc(alloc_ptr, base_strlen);
-    size_t used  = 0;
-    size_t caps  = base_strlen;
+    yarn__str_builder string_builder = {0};
+    YARN_MAKE_DYNARRAY(&string_builder, sizeof(char), memory_size, alloc_ptr);
 
     for (size_t i = 0; i < base_strlen; ++i) {
-        yarn__maybe_extend_dyn_array((void**)str, sizeof(char), used, &caps, alloc_ptr);
-
         if (format[i] == '{') {
             int replace_idx = -1;
-            i++; /* skip { itself */
+            i++; /* skip '{' itself */
             while(format[i++] && format[i] != '}') {
                 assert(format[i] >= '0' && format[i] <= '9');
                 replace_idx = replace_idx * 10 + (format[i] - '0');
@@ -1299,25 +1311,29 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs, void *a
             char *target_subst = substs[replace_idx];
             char n = 0;
             while((n = *target_subst++)) {
-                yarn__maybe_extend_dyn_array((void**)str, sizeof(char), used, &caps, alloc_ptr);
-                str[used++] = n;
+                YARN_DYNARR_APPEND(&string_builder, n);
             }
         } else {
-            str[used++] = format[i];
+            YARN_DYNARR_APPEND(&string_builder, format[i]);
         }
     }
-    yarn__maybe_extend_dyn_array((void**)str, sizeof(char), used, &caps, alloc_ptr);
-    str[used++] = '\0';
-    return str;
+
+    /* NOTE:
+     * weird C / C++ difference standard.
+     * character constant evaluates to int in C, but char in C++.
+     * */
+    char null_terminator = '\0';
+    YARN_DYNARR_APPEND(&string_builder, null_terminator);
+    return string_builder.entries;
 }
 
 /* ===========================================
  * Parsing strings / CSV tables.
  */
-yarn_string_line *yarn__alloc_line(yarn_string_repo *strings, void *alloc_ptr) {
+yarn_parsed_entry *yarn__alloc_line(yarn_string_repo *strings, void *alloc_ptr) {
     assert(strings->entries != 0);
-    yarn__maybe_extend_dyn_array((void **)&strings->entries, sizeof(strings->entries[0]), strings->used, &strings->capacity, alloc_ptr);
 
+    yarn__maybe_extend_dyn_array((void **)&strings->entries, sizeof(strings->entries[0]), strings->used, &strings->capacity, alloc_ptr);
     return &strings->entries[strings->used++];
 }
 
@@ -1334,14 +1350,14 @@ const yarn__expect_csv_column expect_column[] = {
     { "lineNumber", sizeof("lineNumber") - 1 },
 };
 
-int yarn__load_string_table(yarn_ctx *ctx, void *string_table_buffer, size_t string_table_length) {
-    if (ctx->strings.used > 0) {
+int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, size_t string_table_length) {
+    if (dialogue->strings.used > 0) {
         /* TODO: fragmentation disaster. */
-        for(size_t i = 0; i < sizeof(ctx->strings.used); ++i) {
-            yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].id);
-            yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].text);
-            yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].file);
-            yarn_free(ctx->alloc_ptr, ctx->strings.entries[i].node);
+        for(size_t i = 0; i < sizeof(dialogue->strings.used); ++i) {
+            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].id);
+            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].text);
+            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].file);
+            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].node);
         }
     }
 
@@ -1355,7 +1371,7 @@ int yarn__load_string_table(yarn_ctx *ctx, void *string_table_buffer, size_t str
     int parsing_first_line = 1;
     int in_quote = 0;
 
-    yarn_string_line *line = yarn__alloc_line(&ctx->strings, ctx->alloc_ptr);
+    yarn_parsed_entry *line = yarn__alloc_line(&dialogue->strings, dialogue->alloc_ptr);
 
     while(current < string_table_length) {
         assert(current_column <= column_size);
@@ -1387,7 +1403,7 @@ int yarn__load_string_table(yarn_ctx *ctx, void *string_table_buffer, size_t str
                     assert(current_column == column_size);
                     if (!parsing_first_line) {
                         line_count++;
-                        line = yarn__alloc_line(&ctx->strings, ctx->alloc_ptr);
+                        line = yarn__alloc_line(&dialogue->strings, dialogue->alloc_ptr);
                     } else {
                         parsing_first_line = 0;
                     }
@@ -1417,12 +1433,12 @@ int yarn__load_string_table(yarn_ctx *ctx, void *string_table_buffer, size_t str
 
                         char *current_ptr = &begin[current];
                         if (strncmp(current_ptr, expect->word, expect->size) != 0) {
-                            char *dupped_str = yarn_malloc(ctx->alloc_ptr, consumed_since + 1);
+                            char *dupped_str = yarn_malloc(dialogue->alloc_ptr, consumed_since + 1);
                             memset(dupped_str, 0, consumed_since);
                             strncpy(dupped_str, current_ptr, consumed_since);
 
                             printf("Expect word difference: %s to %s\n", expect->word, dupped_str);
-                            yarn_free(ctx->alloc_ptr, dupped_str);
+                            yarn_free(dialogue->alloc_ptr, dupped_str);
                             return 0;
                         }
 
@@ -1468,8 +1484,15 @@ int yarn__load_string_table(yarn_ctx *ctx, void *string_table_buffer, size_t str
 
                             line->line_number = result_number;
                         } else {
-                            char *dupped_str = yarn_malloc(ctx->alloc_ptr, consumed_since + 1);
-                            memset(dupped_str, 0, consumed_since+1);
+                            /* NOTE:
+                             * aligns memory to more than 64 */
+                            size_t actual_size = consumed_since + 1;
+                            ptrdiff_t mod = (actual_size) & (63);
+                            actual_size += mod;
+
+                            char *dupped_str = yarn_malloc(dialogue->alloc_ptr, actual_size);
+
+                            memset(dupped_str, 0, actual_size);
                             strncpy(dupped_str, current_ptr, consumed_since);
 
                             /* super complicated for just removing double quotation though. */

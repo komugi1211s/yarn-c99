@@ -1,18 +1,18 @@
 
 #define YARN_C99_IMPLEMENTATION
+
 #include "protobuf-c.c"
 #include "yarn_spinner.pb-c.h"
 #include "yarn_spinner.pb-c.c"
+
+#define STB_LEAKCHECK_IMPLEMENTATION
+#define STB_LEAKCHECK_REALLOC_PRESERVE_MALLOC_FILELINE
+#include "stb_leakcheck.h"
 #include "yarn_c99.h"
-
-#include <stdlib.h>
-#include <stdio.h>
-
 
 struct Entity {
     int commands;
 };
-
 
 char *read_entire_file(char *file_name, size_t *bytes_read) {
     assert(file_name && bytes_read);
@@ -36,24 +36,23 @@ char *read_entire_file(char *file_name, size_t *bytes_read) {
     return result;
 }
 
-void yarn_handle_line(yarn_ctx *ctx, yarn_line *line) {
+void yarn_handle_line(yarn_dialogue *dialogue, yarn_line *line) {
     size_t id_size = strlen(line->id);
     char *message = "unknown";
 
-    for (int i = 0; i < ctx->strings.used; ++i) {
-        if (strncmp(ctx->strings.entries[i].id, line->id, id_size) == 0) {
-            message = ctx->strings.entries[i].text;
-            break;
+    for (int i = 0; i < dialogue->strings.used; ++i) {
+        if (strncmp(dialogue->strings.entries[i].id, line->id, id_size) == 0) {
+            message = dialogue->strings.entries[i].text; break;
         }
     }
 
     printf("%s", message);
     char a = 0;
     while ((a = getchar()) && a != '\n') {}
-    yarn_continue(ctx);
+    yarn_continue(dialogue);
 }
 
-void yarn_handle_option(yarn_ctx *ctx, yarn_option *options, int option_count) {
+void yarn_handle_option(yarn_dialogue *dialogue, yarn_option *options, int option_count) {
     int max_option_id = -1;
     for (int o = 0; o < option_count; ++o) {
         yarn_option *opt = &options[o];
@@ -61,9 +60,9 @@ void yarn_handle_option(yarn_ctx *ctx, yarn_option *options, int option_count) {
         size_t id_size = strlen(opt->line.id);
         char *message_for_id = 0;
 
-        for (int i = 0; i < ctx->strings.used; ++i) {
-            if (strncmp(ctx->strings.entries[i].id, opt->line.id, id_size) == 0) {
-                message_for_id = ctx->strings.entries[i].text;
+        for (int i = 0; i < dialogue->strings.used; ++i) {
+            if (strncmp(dialogue->strings.entries[i].id, opt->line.id, id_size) == 0) {
+                message_for_id = dialogue->strings.entries[i].text;
                 break;
             }
         }
@@ -92,19 +91,19 @@ void yarn_handle_option(yarn_ctx *ctx, yarn_option *options, int option_count) {
         if (chosen) {
             char b = 0;
             while ((b = getchar()) && b != '\n') {}
-            yarn_select_option(ctx, a);
+            yarn_select_option(dialogue, a);
             break;
         }
     }
 }
 
-void yarn_handle_command(yarn_ctx *ctx, char *cmd) {
+void yarn_handle_command(yarn_dialogue *dialogue, char *cmd) {
     printf("Command fired: %s\n", cmd);
-    yarn_continue(ctx);
+    yarn_continue(dialogue);
 }
 
 int main(int argc, char **argv) {
-    yarn_ctx *ctx = yarn_create_context_heap();
+    yarn_dialogue *dialogue = yarn_create_dialogue_heap(0);
 
     assert(argc == 3);
     char *yarnc = argv[1];
@@ -113,14 +112,19 @@ int main(int argc, char **argv) {
     size_t strtable_size = 0;
     char *yarn_c = read_entire_file(yarnc, &yarnc_size);
     char *strtable = read_entire_file(csv, &strtable_size);
-    yarn_load_program(ctx, yarn_c, yarnc_size, strtable, strtable_size);
+    printf("Loading a program\n");
+    yarn_load_program(dialogue, yarn_c, yarnc_size, strtable, strtable_size);
 
-    ctx->delegates.line_handler    = yarn_handle_line;
-    ctx->delegates.option_handler  = yarn_handle_option;
-    ctx->delegates.command_handler = yarn_handle_command;
-    yarn_continue(ctx);
+    dialogue->delegates.line_handler    = yarn_handle_line;
+    dialogue->delegates.option_handler  = yarn_handle_option;
+    dialogue->delegates.command_handler = yarn_handle_command;
+    printf("starting a dialogue\n");
+    yarn_continue(dialogue);
 
+    printf("destroying dialogue\n");
+    yarn_destroy_dialogue(dialogue);
     free(yarn_c);
     free(strtable);
-    yarn_destroy_context(ctx);
+
+    stb_leakcheck_dumpmem();
 }

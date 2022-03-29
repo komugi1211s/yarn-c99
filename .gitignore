@@ -1,2 +1,5 @@
 dist/
 tags
+
+# for testing
+src/stb_leakcheck.h

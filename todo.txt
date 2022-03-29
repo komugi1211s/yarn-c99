@@ -1,6 +1,2 @@
-1. fix weird linebreak problem
-    some RUN_LINE automatically inserts line break, some doesn't.
-    after SHOW_OPTION will ignore line-break for some reason.
-
-2. automatic skipping problem
-    after selecting an option, next RUN_LINE call fails to wait for getchar.
+1. handle command / register command
+2. default "if visited" check
