@@ -22,8 +22,28 @@ static yarn_option *options   = 0;
 static int          n_options = 0;
 
 static float accumulator = 0;
-static Font font;
+static Font fontcp;
+static Font fontnormal;
 #define TEXT_SIZE 20
+
+void draw_text_utf8(const char *string, Vector2 pos, Color c) {
+    size_t textlength = strlen(string);
+    float advance = 0;
+    for(int i = 0; i < textlength;) {
+        int bytecount = 1;
+        int codepoint = GetCodepoint(&string[i], &bytecount);
+        GlyphInfo info = GetGlyphInfo(fontcp, codepoint);
+
+        Vector2 p = { pos.x + advance, pos.y };
+        if (bytecount == 1 && string[i] == '\n') {
+            i += bytecount;
+            continue;
+        }
+        DrawTextCodepoint(fontcp, codepoint, p, TEXT_SIZE, c);
+        advance += info.advanceX;
+        i += bytecount;
+    }
+}
 
 void handle_line(yarn_dialogue *dialog, yarn_line *line) {
     mode = MD_LINE;
@@ -48,10 +68,10 @@ void render_initial_prompt(yarn_dialogue *d) {
         10, 10
     };
 
-    DrawTextEx(font, "Press X to start `Sally` dialog.\n", pos, TEXT_SIZE, 0, BLACK);
+    DrawTextEx(fontnormal, "Press X to start `Sally` dialog.\n", pos, TEXT_SIZE, 0, BLACK);
 
     pos.y += TEXT_SIZE + 10;
-    DrawTextEx(font, "Press Y to start `Ship`  dialog.\n", pos, TEXT_SIZE, 0, BLACK);
+    DrawTextEx(fontnormal, "Press Y to start `Ship` dialog.\n", pos, TEXT_SIZE, 0, BLACK);
 
     if (IsKeyPressed('X')) {
         yarn_set_node(d, "Sally");
@@ -84,7 +104,7 @@ void render_sentence(yarn_dialogue *d, int x, int y) {
      * =============== */
     if (reached_to_an_end) {
         char prompt[] = "next (ENTER)";
-        int prompt_width = MeasureTextEx(font, prompt, TEXT_SIZE, 0).x;
+        int prompt_width = MeasureTextEx(fontnormal, prompt, TEXT_SIZE, 0).x;
 
         int prompt_x = (GetScreenWidth() - prompt_width) / 2;
         int prompt_y = GetScreenHeight() - TEXT_SIZE - 10; /* a bit of margin here. */
@@ -94,7 +114,7 @@ void render_sentence(yarn_dialogue *d, int x, int y) {
             prompt_y,
         };
 
-        DrawTextEx(font, prompt, position, TEXT_SIZE, 0, BLACK);
+        DrawTextEx(fontnormal, prompt, position, TEXT_SIZE, 0, BLACK);
     }
 
     char *f = sentence;
@@ -103,7 +123,7 @@ void render_sentence(yarn_dialogue *d, int x, int y) {
         x,
         y,
     };
-    DrawTextEx(font, f, position, TEXT_SIZE, 0, BLUE);
+    draw_text_utf8(f, position, BLUE);
     if (!reached_to_an_end) free(f);
 }
 
@@ -145,16 +165,16 @@ void render_options(yarn_dialogue *d, int x, int y) {
             prompt = TextFormat("%d: %s", o->id, line);
         }
 
-        DrawTextEx(font, prompt, pos, TEXT_SIZE, 0, color);
+        draw_text_utf8(prompt, pos, color);
         pos.y += TEXT_SIZE + 5;
     }
 }
 
 void render_debug_info(yarn_dialogue *dialogue) {
     Color   color = Fade(BLACK, 0.5);
-    Vector2 dialogue_pos = { GetScreenWidth() - MeasureTextEx(font, "variable:", TEXT_SIZE, 0).x - 10, 0 };
+    Vector2 dialogue_pos = { GetScreenWidth() - MeasureTextEx(fontnormal, "variable:", TEXT_SIZE, 0).x - 10, 0 };
 
-    DrawTextEx(font, "variable:", dialogue_pos, TEXT_SIZE, 0, color);
+    DrawTextEx(fontnormal, "variable:", dialogue_pos, TEXT_SIZE, 0, color);
     dialogue_pos.y += TEXT_SIZE;
 
     for (int i = 0; i < dialogue->variables.used; ++i) {
@@ -168,30 +188,77 @@ void render_debug_info(yarn_dialogue *dialogue) {
             default:                text = TextFormat("%u: None", var->hash); break;
         }
 
-        dialogue_pos.x = GetScreenWidth() - MeasureTextEx(font, text, TEXT_SIZE, 0).x - 10;
-        DrawTextEx(font, text, dialogue_pos, TEXT_SIZE, 0, color);
+        dialogue_pos.x = GetScreenWidth() - MeasureTextEx(fontnormal, text, TEXT_SIZE, 0).x - 10;
+        DrawTextEx(fontnormal, text, dialogue_pos, TEXT_SIZE, 0, color);
         dialogue_pos.y += TEXT_SIZE;
     }
+}
+
+int *pack_codepoints(char *file, int *size) {
+    int cplen = 0;
+    int *codepoints = LoadCodepoints(file, &cplen);
+
+    int cap = 1024;
+    int sz = 255;
+    int *result = calloc(1024, sizeof(int));
+
+    for (int i = 1; i < 255; ++i) {
+        result[i] = i; /* forcing Ascii character to be a part of it */
+    }
+
+    for(int i = 0; i < cplen; ++i) {
+        int chara = codepoints[i];
+        for(int j = 0; j < sz; ++j) {
+            if (result[j] == chara) {
+                goto skipped;
+            }
+        }
+
+        if (sz == cap) {
+            int *n = calloc(cap * 2, sizeof(int));
+            assert(n);
+            if (n) {
+                memcpy(n, result, sz * sizeof(int));
+                free(result);
+                result = n;
+
+                cap *= 2;
+            }
+        }
+        result[sz++] = chara;
+        skipped:
+        ;
+    }
+    UnloadCodepoints(codepoints);
+
+    *size = sz;
+    return result;
 }
 
 int main(int argc, char **argv) {
     InitWindow(800, 600, "Yarn Example");
     yarn_dialogue *d = yarn_create_dialogue_heap(0);
 
-    /* fonts */
-    font = LoadFontEx("resources/Inconsolata.ttf", TEXT_SIZE, 0, 0);
 
     /* Read files */
     unsigned int yarnc_read = 0;
     unsigned int csv_read = 0;
-    char *yarnc_file = (char*)LoadFileData("resources/Output.yarnc", &yarnc_read);
-    char *csv_file   = (char*)LoadFileData("resources/Output.csv",   &csv_read);
+    char *yarnc_file =(char*) LoadFileData("resources/Output.yarnc", &yarnc_read);
+    char *csv_file   = LoadFileText("resources/Output-ja.csv");
+    csv_read = strlen(csv_file);
+
+    int size = 0;
+    int *packed = pack_codepoints(csv_file, &size);
+
+    fontcp     = LoadFontEx("resources/Font.ttf", TEXT_SIZE, packed, size);
+    fontnormal = LoadFontEx("resources/Font.ttf", TEXT_SIZE, 0, 0);
+    free(packed);
 
     assert(yarnc_file && csv_file);
     yarn_load_program(d, yarnc_file, (size_t)yarnc_read, csv_file, (size_t)csv_read);
 
-    UnloadFileData((unsigned char*)yarnc_file);
-    UnloadFileData((unsigned char*)csv_file);
+    UnloadFileData((unsigned char *)yarnc_file);
+    UnloadFileText(csv_file);
 
     d->delegates.line_handler   = handle_line;
     d->delegates.option_handler = handle_options;
@@ -220,7 +287,10 @@ int main(int argc, char **argv) {
                 accumulator -= char_interval_in_ms;
                 if (accumulator < 0) accumulator = 0;
 
-                sentence_count += 1;
+                int bytes = 1;
+                GetCodepoint(&sentence[sentence_count], &bytes);
+
+                sentence_count += bytes;
             }
 
             if (sentence_length != 0 && (sentence_count > sentence_length)) {
@@ -243,7 +313,8 @@ int main(int argc, char **argv) {
     }
 
     yarn_destroy_dialogue(d);
-    UnloadFont(font);
+    UnloadFont(fontcp);
+    UnloadFont(fontnormal);
     CloseWindow();
     return 0;
 }

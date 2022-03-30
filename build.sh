@@ -8,7 +8,7 @@ if [ "$1" == "release" ]; then
     EXEC_FILE_NAME="dist/compiled_release"
 else
     echo "[build]: debug mode."
-    CFLAGS="-fsanitize=undefined,address -g -o"
+    CFLAGS="-fsanitize=undefined -g"
     EXEC_FILE_NAME="dist/compiled"
 fi
 

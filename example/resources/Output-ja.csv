@@ -1,0 +1,29 @@
+id,text,file,node,lineNumber
+line:794945,"プレイヤー: やあ、サリー。",/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,12
+line:2dc39b,サリー: うわっ！,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,13
+line:34de2f,サリー: 忍び寄ってくるなんて。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,14
+line:dcc2bc,サリー: 驚かせないでよ。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,15
+line:a8e70c,プレイヤー: やあ。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,17
+line:305cde,サリー: やあ。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,18
+line:5d7a7c,何か興味深い事でも起こったかい？,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,29
+line:0a7e39,端末のことはごめん。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,31
+line:0facf7,さよなら。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally,33
+line:8c3f98,サリー: いや、何も。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally_Watch,42
+line:24c418,"サリー: 何時も通り、退屈な星雲が退屈に広がってるだけ。",/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally_Watch,43
+line:df4eaf,"サリー: そういえば、船が呼んでいたよ。会いに行っておいで。",/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally_Watch,44
+line:1fea6c,プレイヤー: もう会ってきたよ！,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally_Watch,47
+line:5df323,サリー: もう一度行ってみてごらん。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally_Watch,48
+line:60c282,サリー: さよなら。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally_Exit,57
+line:d7df49,サリー: ああ、次からは気をつけてね。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Sally.yarn,Sally_Sorry,65
+line:5837f2,"船: こんにちは。",/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,7
+line:ship9,"プレイヤー: やあ、船。",/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,8
+line:ship10,プレイヤー: 宇宙はどう？,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,9
+line:ship11,"船: 最高です。",/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,10
+line:ship12,船: とっても広大で！,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,12
+line:ship13,船: どうも！！,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,16
+line:ship1,プレイヤー: サリーに聞いたけど、何か用？,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,21
+line:ship3,船: もちろん！！,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,23
+line:ship4,船: 彼女が貴方に伝えてほしいと言っていましたよ。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,25
+line:ship5,船: 「もし、また端末を初期化せずに監視をサボったら…」,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,26
+line:ship6,船: 「生きたまま皮を剥いでやる」ってね！,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,28
+line:ship7,プレイヤー: げ。,/home/user/Documents/c_project/YarnC99/tests/yarn-files/Projects/Space/Ship.yarn,Ship,31

@@ -32,13 +32,13 @@ char *read_entire_file(char *file_name, size_t *bytes_read) {
 
 void yarn_handle_line(yarn_dialogue *dialogue, yarn_line *line) {
     size_t id_size = strlen(line->id);
-    /* char *message = yarn_get_localized_line(locale, line); */
-    char *message = yarn_load_line(dialogue, line);
+    char *message  = yarn_convert_to_displayable_line(dialogue->strings, line);
     if (message) {
         printf("%s", message);
     }
     char a = 0;
     while ((a = getchar()) && a != '\n') {}
+    yarn_destroy_displayable_line(message);
     yarn_continue(dialogue);
 }
 
@@ -46,18 +46,9 @@ void yarn_handle_option(yarn_dialogue *dialogue, yarn_option *options, int optio
     int max_option_id = -1;
     for (int o = 0; o < option_count; ++o) {
         yarn_option *opt = &options[o];
-
-        size_t id_size = strlen(opt->line.id);
-        char *message_for_id = 0;
-
-        for (int i = 0; i < dialogue->strings.used; ++i) {
-            if (strncmp(dialogue->strings.entries[i].id, opt->line.id, id_size) == 0) {
-                message_for_id = dialogue->strings.entries[i].text;
-                break;
-            }
-        }
-
+        char *message_for_id = yarn_convert_to_displayable_line(dialogue->strings, &opt->line);
         printf("%d: %s\n", options[o].id, message_for_id);
+        yarn_destroy_displayable_line(message_for_id);
     }
 
     yarn_option *chosen = 0;
@@ -103,27 +94,26 @@ void load_string_table(yarn_string_table *strtable, char *csv_name) {
     size_t csv_file_size = 0;
     char *csv_data = read_entire_file(csv_name, &csv_file_size);
 
-    yarn_load_csv(strtable, csv_data, csv_file_size);
+    yarn_load_string_table(strtable, csv_data, csv_file_size);
 
     free(csv_data);
 }
 
 int main(int argc, char **argv) {
-    /* creates locale with 32 kb buffer. */
     yarn_variable_storage storage;
-    /* yarn_string_table *string_table; */
+    yarn_string_table *string_table;
     yarn_dialogue     *dialogue;
 
-    storage      = yarn_create_default_storage(NULL);
-    /* string_table = yarn_create_string_table(NULL); */
-    dialogue     = yarn_create_dialogue(NULL, storage);
+    storage      = yarn_create_default_storage();
+    string_table = yarn_create_string_table();
+    dialogue     = yarn_create_dialogue(storage);
 
     char *program_name = (argc > 1) ? argv[1] : "Output.yarnc";
     char *csv_name     = (argc > 2) ? argv[2] : "Output.csv";
     load_program(dialogue, program_name);
-    load_string_table(0, csv_name);
+    load_string_table(string_table, csv_name);
 
-    /* dialogue->strings        = *string_table; */
+    dialogue->strings        = string_table;
     dialogue->line_handler   = yarn_handle_line;
     dialogue->option_handler = yarn_handle_option;
     dialogue->command_handler = yarn_handle_command;
@@ -136,7 +126,7 @@ int main(int argc, char **argv) {
     } while (yarn_is_active(dialogue));
 
     yarn_destroy_dialogue(dialogue);
-    /* yarn_destroy_string_table(string_table); */
+    yarn_destroy_string_table(string_table);
     yarn_destroy_default_storage(storage);
     return 0;
 }

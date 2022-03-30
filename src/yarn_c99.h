@@ -14,6 +14,13 @@
       follow protobuf-c tutorials to use protobuf.
 
     to create implementation:
+      full example below:
+        #include <protobuf-c/protobuf-c.h>
+        #include "yarn_spinner.pb-c.h" // To create protobuf binding
+
+        #define YARN_C99_IMPLEMENTATION // to activate implementation
+        #include "yarn_c99.h" // now you can use yarn c99 functions.
+
       1. requires:
         "yarn_spinner.pb-c.h"
 
@@ -30,13 +37,6 @@
       defined this:
         #define YARN_C99_STATIC
 
-      full example below:
-        #include "yarn_spinner.pb-c.h" // To create protobuf binding
-
-        #define YARN_C99_IMPLEMENTATION // to activate implementation
-        #include "yarn_c99.h" // now you can use yarn c99 functions.
-
-
 info:
     stubs:
         yarn's line handler / option handler stuff, by default, uses stub operation.
@@ -49,9 +49,6 @@ info:
 #define YARN_C99_INCLUDE
 
 #include <stdint.h>
-#include <assert.h>
-#include <string.h> /* for strncmp, memset */
-#include <stdio.h>  /* TODO: cleanup. basically here for printf debugging */
 
 /*
  * TODO: cleanup
@@ -79,20 +76,6 @@ info:
 
 #define YARN_STATIC_ASSERT(cond, ident_message) \
     typedef char YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__))[(cond) ? 1 : -1];
-
-#if !defined(yarn_malloc) || !defined(yarn_free) || !defined(yarn_realloc)
-  #if !defined(yarn_malloc) && !defined(yarn_free) && !defined(yarn_realloc)
-    #include <stdlib.h>
-    #define yarn_malloc(alloc_ptr,  sz)      malloc(sz)
-    #define yarn_free(alloc_ptr,    ptr)     free(ptr)
-    #define yarn_realloc(alloc_ptr, ptr, sz) realloc(ptr, sz)
-  #else
-    #error "you must define all yarn_{malloc,free,realloc} macro if you're going to define one of them."
-  #endif
-#endif
-
-struct Yarn__Program;
-struct Yarn__Instruction;
 
 /* Yarn Dialogue:
  * corresponds to YarnSpinner.Dialogue in C# implementation. */
@@ -164,8 +147,6 @@ struct yarn_variable_storage {
     yarn_save_variable_func *save;
 };
 
-typedef yarn_value yarn_function(yarn_dialogue *dialogue);
-
 typedef enum {
     YARN_VALUE_NONE, /* corresponds to null, although it's not valid in 2.0 */
     YARN_VALUE_STRING,
@@ -201,17 +182,6 @@ typedef struct {
 } yarn_line;
 
 typedef struct {
-    char *text; /* After markup. */
-    char *raw_text;
-
-    size_t n_substitutions;
-    char **substitutions;
-
-    size_t n_metadata;
-    char **metadata;
-} yarn_localized_line;
-
-typedef struct {
     yarn_line line;
     int id;
     char *destination_node;
@@ -219,11 +189,38 @@ typedef struct {
 } yarn_option;
 
 #define YARN_DYN_ARRAY(ty) struct { \
-    void *allocator; \
     size_t used; \
     size_t capacity; \
     ty *entries; \
 }
+
+/* =============================================
+ * Yarn functions:
+ * TODO: match it to C# implementation. SUBJECT TO CHANGE
+ *
+ * for now, it works similar to how Lua's function works,
+ * but much more barebone. you have to know how VM works.
+ *
+ * define function with signature of yarn_function below,
+ *    yarn_value add(yarn_dialogue *dialogue) {
+ *        // it's stack based, means you have to pop it backwards
+ *
+ *        int right = yarn_value_as_int(yarn_pop_value(dialogue));
+ *        int left  = yarn_value_as_int(yarn_pop_value(dialogue));
+ *        return yarn_int(left + right);
+ *    }
+ *
+ * then create const array with sentinel at the bottom:
+ *    yarn_function_entry entries[] = {
+ *      { "add", add, 2 }, // name, function pointer, argument count
+ *      { 0, 0, 0 } // Sentinel
+ *    };
+ *
+ * then call "yarn_load_functions"
+ *    yarn_load_functions(dialogue, entries);
+ */
+
+typedef yarn_value yarn_function(yarn_dialogue *dialogue);
 
 typedef struct {
     char            *name;
@@ -266,12 +263,15 @@ YARN_C99_DEF yarn_prepare_for_lines_handler_func yarn__stub_prepare_for_lines_ha
 /* TODO: same as lua. */
 #define YARN_STACK_CAPACITY 256
 
+/* Protobuf stuff. */
+struct Yarn__Program;
+struct Yarn__Instruction;
+
 struct yarn_dialogue {
     // ProtobufCAllocator *program_allocator;
-    void *alloc_ptr; /* will be passed into malloc, free, realloc. */
 
     Yarn__Program      *program;
-    yarn_string_table   strings;
+    yarn_string_table  *strings;
     yarn_exec_state     execution_state;
 
     /* Delegates. */
@@ -294,9 +294,29 @@ struct yarn_dialogue {
     int current_instruction;
 };
 
+/*
+ * ====================================================
+ * Function declarations.
+ * ====================================================
+ * */
+
+/* Creation / Destroy functions. */
+YARN_C99_DEF yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage);
+YARN_C99_DEF void           yarn_destroy_dialogue(yarn_dialogue *dialogue);
+
+YARN_C99_DEF yarn_variable_storage yarn_create_default_storage(void);
+YARN_C99_DEF void                  yarn_destroy_default_storage(yarn_variable_storage storage);
+
+YARN_C99_DEF yarn_string_table *yarn_create_string_table(void);
+YARN_C99_DEF void               yarn_destroy_string_table(yarn_string_table *table);
+
+/* Loading functions. */
+YARN_C99_DEF int yarn_load_program(yarn_dialogue *dialogue, void *program_buffer, size_t program_length);
+YARN_C99_DEF int yarn_load_string_table(yarn_string_table *table, void *csv_buffer, size_t csv_length);
+
 /* value related helpers. */
 /* makes value. */
-YARN_C99_DEF yarn_value yarn_none();
+YARN_C99_DEF yarn_value yarn_none(void);
 YARN_C99_DEF yarn_value yarn_float(float real);
 YARN_C99_DEF yarn_value yarn_int(int integer);
 YARN_C99_DEF yarn_value yarn_bool(int boolean);
@@ -308,36 +328,39 @@ YARN_C99_DEF int   yarn_value_as_int(yarn_value value);
 YARN_C99_DEF int   yarn_value_as_bool(yarn_value value);
 YARN_C99_DEF float yarn_value_as_float(yarn_value value);
 
+/* formatting value.
+ * must be freed with destroy_formatted_string. */
+YARN_C99_DEF char *yarn_format_value(yarn_value value);
+YARN_C99_DEF void  yarn_destroy_formatted_string(char *formatted_string);
+
 /* manipulates Yarn VM. */
 YARN_C99_DEF int yarn_is_active(yarn_dialogue *dialogue);
 YARN_C99_DEF int yarn_continue(yarn_dialogue *dialogue);
 
+YARN_C99_DEF int yarn_set_node(yarn_dialogue *dialogue, char *node_name);
+YARN_C99_DEF int yarn_select_option(yarn_dialogue *dialogue, int select_option);
+
+/* stack operations. */
 YARN_C99_DEF yarn_value yarn_pop_value(yarn_dialogue *dialogue);
 YARN_C99_DEF void       yarn_push_value(yarn_dialogue *dialogue, yarn_value value);
 
+/* variable storage operations.
+ * NOTE: it just calls storage.load / storage.value inside.
+ * */
 YARN_C99_DEF yarn_value yarn_load_variable(yarn_dialogue *dialogue, char *var_name);
 YARN_C99_DEF void       yarn_store_variable(yarn_dialogue *dialogue, char *var_name, yarn_value value);
 
-YARN_C99_DEF int   yarn_set_node(yarn_dialogue *dialogue, char *node_name);
-YARN_C99_DEF int   yarn_select_option(yarn_dialogue *dialogue, int select_option);
-
-/* TODO: This function should be the job of LineParser. */
-/* TODO: This */
-YARN_C99_DEF char *yarn_create_displayable_text(yarn_line line, char *buffer, size_t buffer_size);
-
-/* Creation / Destroy functions. */
-YARN_C99_DEF yarn_dialogue *yarn_create_dialogue(void *allocator_context, yarn_variable_storage storage);
-YARN_C99_DEF void           yarn_destroy_dialogue(yarn_dialogue *dialogue);
-
-YARN_C99_DEF yarn_variable_storage yarn_create_default_storage(void *allocator_context);
-YARN_C99_DEF void yarn_destroy_default_storage(yarn_variable_storage storage);
+/* loads line, and performs substitution.
+ * NOTE:
+ *    1. convert function consumes line. it is unsafe to access inner data after you've consumed the line.
+ *    2. returned value must be freed with yarn_destroy_displayable_line.
+ * */
+YARN_C99_DEF char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line);
+YARN_C99_DEF void  yarn_destroy_displayable_line(char *line);
 
 /* Function related stuff. */
 YARN_C99_DEF yarn_function_entry *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
-YARN_C99_DEF int yarn_load_functions(yarn_dialogue *dialogue, yarn_function_entry *functions);
-
-/* Loading functions. */
-YARN_C99_DEF int yarn_load_program(yarn_dialogue *dialogue, void *program_buffer, size_t program_length);
+YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, yarn_function_entry *functions);
 
 /*
  * ====================================================
@@ -345,27 +368,11 @@ YARN_C99_DEF int yarn_load_program(yarn_dialogue *dialogue, void *program_buffer
  * ====================================================
  * */
 
-/* Double buffered frame allocator.
- * each time vm continues, it swaps buffer's active region and
- * allocates off of that.
- *
- * this has an advantage of freely allocating and never care about leaking / when to free memory.
- */
-typedef struct {
-    void *buffer;
-    size_t full_size;
-    int    is_buffer_a_used;
-
-    size_t buffer_a_used;
-    size_t buffer_b_used;
-} yarn__framealloc;
-
 /*
  * Standard libraries.
  * based on c#'s standard libraries. definitions will be inside the IMPLEMENTATION block.
  */
 YARN_C99_DEF yarn_function_entry yarn__standard_libs[];
-
 
 /* dynamic variable stuff. */
 typedef struct {
@@ -380,12 +387,12 @@ typedef YARN_DYN_ARRAY(yarn__var_entry) yarn__var_array;
 /* Hashes string. */
 YARN_C99_DEF uint32_t yarn__hashstr(char *str, size_t strlength);
 
-/* strndup implementation that uses yarn_malloc. */
-YARN_C99_DEF char *yarn__strndup(void *alloc_ctx, char *original, size_t length);
+/* strndup implementation that uses YARN_MALLOC. */
+YARN_C99_DEF char *yarn__strndup(char *original, size_t length);
 
 
 /* tries to extend dynamic array. */
-YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps, void *allocator);
+YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps);
 
 /*
  * allocates line from current active string repo.
@@ -394,20 +401,21 @@ YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size
  * TODO: @interning -- this function will be converted into interning string
  * once I'm done with basics.
  */
-YARN_C99_DEF yarn_parsed_entry *yarn__alloc_line(yarn_string_table *string_table, void *alloc_ptr);
+YARN_C99_DEF yarn_parsed_entry *yarn__alloc_line(yarn_string_table *string_table);
 
 /*
  * allocates new string with substituted value for {0}, {1}, {2}... format.
- * TODO: this should be an operation of LineParser (probably). fix.
  */
-YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_substs, void *alloc_ptr);
+YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_substs);
 
 /*
  * parses csv and loads up into string repo.
  * works under the assumption that you (are loading/loaded) the corresponding program.
  * frees already loaded string table if it exists.
+ *
+ * TODO: subject to cleanup
  */
-YARN_C99_DEF int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, size_t string_table_length);
+YARN_C99_DEF int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer, size_t string_table_length);
 
 /*
  * runs single instruction.
@@ -459,26 +467,36 @@ YARN_C99_DEF void       yarn__save_into_variable_array(void *istorage, char *var
 #if defined(YARN_C99_IMPLEMENTATION) && !defined(YARN_C99_INPLEMENT_COMPLETE)
 #define YARN_C99_INPLEMENT_COMPLETE
 
+#include <assert.h>
+#include <string.h> /* for strncmp, memset */
+#include <stdio.h>  /* TODO: cleanup. basically here for printf debugging */
+
+#if !defined(YARN_MALLOC) || !defined(YARN_FREE) || !defined(YARN_REALLOC)
+  #if !defined(YARN_MALLOC) && !defined(YARN_FREE) && !defined(YARN_REALLOC)
+    #include <stdlib.h>
+    #define YARN_MALLOC(sz)       malloc(sz)
+    #define YARN_FREE(ptr)        free(ptr)
+    #define YARN_REALLOC(ptr, sz) realloc(ptr, sz)
+  #else
+    #error "you must define all yarn_{malloc,free,realloc} macro if you're going to define one of them."
+  #endif
+#endif
+
+
 /*
  * Dynamic array stuff.
  */
 
-#define YARN_MAKE_DYNARRAY(target, elemtype, cap, alloc_ctx) do { \
-    (target)->allocator = alloc_ctx;                   \
+#define YARN_MAKE_DYNARRAY(target, elemtype, cap) do { \
     (target)->capacity  = cap;                         \
     (target)->used      = 0;                           \
-    (target)->entries   = yarn_malloc(allocator, cap * sizeof(elemtype)); \
-} while(0)
-
-#define YARN_FREE_DYNARRAY(target) do { \
-    YARN_STATIC_ASSERT(sizeof(target) == (void *), pass_pointer_to_first_arg_instead_of_value);    \
-    yarn_free((target)->allocator, (target)->entries); \
+    (target)->entries   = YARN_MALLOC(cap * sizeof(elemtype)); \
 } while(0)
 
 #define YARN_DYNARR_APPEND(v, ent) do {                                           \
   YARN_STATIC_ASSERT(sizeof((v)->entries[0]) == sizeof(ent), type_size_mismatch);              \
   yarn__maybe_extend_dyn_array((void**)&((v)->entries), sizeof(ent),         \
-                               ((v)->used), &((v)->capacity), ((v)->allocator)); \
+                               ((v)->used), &((v)->capacity)); \
   ((v)->entries)[((v)->used)++] = (ent);                                       \
 } while (0)
 
@@ -569,6 +587,38 @@ int yarn_value_as_bool(yarn_value value) {
     return 0;
 }
 
+char *yarn_format_value(yarn_value value) {
+    switch(value.type) {
+        case YARN_VALUE_NONE:
+            return "None";
+
+        case YARN_VALUE_BOOL:
+            return (!!value.values.v_bool) ? "true" : "false";
+
+        case YARN_VALUE_STRING:
+            return yarn__strndup(value.values.v_string, strlen(value.values.v_string));
+
+        case YARN_VALUE_FLOAT: /* the tricky one... */
+        {
+            char temp[1024] = {0};
+            int result_length = snprintf(temp, sizeof(temp)-1, "%f", value.values.v_float);
+
+            return yarn__strndup(temp, result_length);
+        } break;
+    }
+}
+
+void  yarn_destroy_formatted_string(char *formatted_string) {
+    size_t length = strlen(formatted_string);
+
+    /* Static text will be ignored. */
+    if (length == 4 && strncmp(formatted_string, "true",  length) == 0) return;
+    if (length == 5 && strncmp(formatted_string, "false", length) == 0) return;
+    if (length == 4 && strncmp(formatted_string, "None",  length) == 0) return;
+
+    YARN_FREE(formatted_string);
+}
+
 yarn_value yarn_pop_value(yarn_dialogue *dialogue) {
     assert(dialogue->stack_ptr > 0);
     yarn_value v = dialogue->stack[--dialogue->stack_ptr];
@@ -626,19 +676,50 @@ int yarn_continue(yarn_dialogue *dialogue) {
     return 0;
 }
 
-char *yarn_load_line(yarn_dialogue *dialogue, yarn_line *line) {
+char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line) {
     size_t given_id_length = strlen(line->id);
-    for (int i = 0; i < dialogue->strings.used; ++i) {
-        yarn_parsed_entry *entry = &dialogue->strings.entries[i];
+    char *result = 0;
+
+    for (int i = 0; i < table->used; ++i) {
+        yarn_parsed_entry *entry = &table->entries[i];
         /* maybe ID points to same memory location? */
         if (entry->id == line->id) return entry->text;
 
         if (strlen(entry->id) != given_id_length) continue;
         if (strncmp(entry->id, line->id, given_id_length) == 0) {
-            return entry->text;
+            result = entry->text;
+            break;
         }
     }
-    return 0;
+
+    if (result) {
+        if (line->n_substitutions > 0) {
+            result = yarn__substitute_string(result, line->substitutions, line->n_substitutions);
+        } else {
+            /* so you can still free it with `yarn_destroy_displayable_line` */
+            result = yarn__strndup(result, strlen(result));
+        }
+    } else {
+        printf("line id %s does not exist.\n", line->id);
+        printf("NOTE: the line will still be consumed\n");
+    }
+
+    /* no matter how actual providing goes, still consume the base line. */
+    if (line->n_substitutions > 0) {
+        for (int i = 0; i < line->n_substitutions; ++i) {
+            yarn_destroy_formatted_string(line->substitutions[i]);
+        }
+        YARN_FREE(line->substitutions);
+
+        /* Consume substitutions. */
+        line->n_substitutions = 0;
+        line->substitutions   = 0;
+    }
+    return result;
+}
+
+void yarn_destroy_displayable_line(char *line) {
+    YARN_FREE(line);
 }
 
 int yarn_is_active(yarn_dialogue *dialogue) {
@@ -670,7 +751,7 @@ int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
     if (dialogue->node_start_handler) {
         dialogue->node_start_handler(dialogue, node_name);
         if (dialogue->prepare_for_lines_handler) {
-            char **ids = yarn_malloc(dialogue->alloc_ptr, sizeof(void *) * node->n_instructions);
+            char **ids = YARN_MALLOC(sizeof(void *) * node->n_instructions);
             int n_ids = 0;
             for (int i = 0; i < node->n_instructions; ++i) {
                 Yarn__Instruction *inst = node->instructions[i];
@@ -682,7 +763,7 @@ int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
 
             }
             dialogue->prepare_for_lines_handler(dialogue, ids, n_ids);
-            yarn_free(dialogue->alloc_ptr, ids);
+            YARN_FREE(ids);
         }
     }
 
@@ -704,7 +785,13 @@ int yarn_select_option(yarn_dialogue *dialogue, int select_option) {
     for (int i = 0; i < dialogue->current_options.used; ++i) {
         yarn_option opt = dialogue->current_options.entries[i];
         if (opt.line.n_substitutions > 0) {
-            yarn_free(dialogue->alloc_ptr, opt.line.substitutions);
+            for (int i = 0; i < opt.line.n_substitutions; ++i) {
+                yarn_destroy_formatted_string(opt.line.substitutions[i]);
+            }
+            YARN_FREE(opt.line.substitutions);
+
+            opt.line.n_substitutions = 0;
+            opt.line.substitutions   = 0;
         }
     }
 
@@ -713,11 +800,11 @@ int yarn_select_option(yarn_dialogue *dialogue, int select_option) {
     return 1;
 }
 
-yarn_dialogue *yarn_create_dialogue(void *allocator_context, yarn_variable_storage storage) {
-    yarn_dialogue *dialogue = yarn_malloc(allocator_context, sizeof(yarn_dialogue));
-    dialogue->alloc_ptr = allocator_context;
+yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
+    yarn_dialogue *dialogue = YARN_MALLOC(sizeof(yarn_dialogue));
 
     dialogue->program = 0;
+    dialogue->strings = 0;
     dialogue->storage = storage;
 
     dialogue->current_node        = 0;
@@ -735,12 +822,8 @@ yarn_dialogue *yarn_create_dialogue(void *allocator_context, yarn_variable_stora
     dialogue->dialogue_complete_handler = &yarn__stub_dialogue_complete_handler;
     dialogue->prepare_for_lines_handler = &yarn__stub_prepare_for_lines_handler;
 
-    YARN_MAKE_DYNARRAY(&dialogue->strings,         yarn_parsed_entry, 512, dialogue->alloc_ptr);
-    YARN_MAKE_DYNARRAY(&dialogue->library,         yarn_function_entry,    32,  dialogue->alloc_ptr);
-    YARN_MAKE_DYNARRAY(&dialogue->current_options, yarn_option,       32,  dialogue->alloc_ptr);
-
-    /* NOTE: it's fine as long as I don't put float or something into yarn_parsed_entry. */
-    memset(dialogue->strings.entries, 0, sizeof(yarn_parsed_entry) * 512);
+    YARN_MAKE_DYNARRAY(&dialogue->library,         yarn_function_entry, 32);
+    YARN_MAKE_DYNARRAY(&dialogue->current_options,         yarn_option, 32);
 
     yarn_load_functions(dialogue, yarn__standard_libs);
     return dialogue;
@@ -750,28 +833,24 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
     if (dialogue->program)
         yarn__program__free_unpacked(dialogue->program, 0); /* TODO: @allocator */
 
-    for(size_t i = 0; i < dialogue->strings.used; ++i) {
-        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].id);
-        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].text);
-        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].file);
-        yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].node);
-    }
-
     for (size_t i = 0; i < dialogue->current_options.used; ++i) {
-        if (dialogue->current_options.entries[i].line.n_substitutions > 0) {
-            yarn_free(dialogue->alloc_ptr, dialogue->current_options.entries[i].line.substitutions);
+        yarn_option opt = dialogue->current_options.entries[i];
+        if (opt.line.n_substitutions > 0) {
+            for (int i = 0; i < opt.line.n_substitutions; ++i) {
+                yarn_destroy_formatted_string(opt.line.substitutions[i]);
+            }
+            YARN_FREE(opt.line.substitutions);
         }
     }
 
-    yarn_free(dialogue->alloc_ptr, dialogue->current_options.entries);
-    yarn_free(dialogue->alloc_ptr, dialogue->library.entries);
-    yarn_free(dialogue->alloc_ptr, dialogue->strings.entries);
-    yarn_free(dialogue->alloc_ptr, dialogue);
+    YARN_FREE(dialogue->current_options.entries);
+    YARN_FREE(dialogue->library.entries);
+    YARN_FREE(dialogue);
 }
 
-yarn_variable_storage yarn_create_default_storage(void *allocator_context) {
-    yarn__var_array *array = yarn_malloc(allocator_context, sizeof(yarn__var_array));
-    YARN_MAKE_DYNARRAY(array, yarn__var_entry, 64, allocator_context);
+yarn_variable_storage yarn_create_default_storage() {
+    yarn__var_array *array = YARN_MALLOC(sizeof(yarn__var_array));
+    YARN_MAKE_DYNARRAY(array, yarn__var_entry, 64);
 
     yarn_variable_storage storage = {0};
     storage.data = array;
@@ -785,19 +864,32 @@ void yarn_destroy_default_storage(yarn_variable_storage storage) {
     yarn__var_array *array = storage.data;
 
     for (int i = 0; i < array->used; ++i) {
-        yarn_free(array->allocator, array->entries[i].name);
+        YARN_FREE(array->entries[i].name);
     }
 
-    yarn_free(array->allocator, array->entries);
-    yarn_free(array->allocator, array);
+    YARN_FREE(array->entries);
+    YARN_FREE(array);
 }
 
-yarn_string_table *yarn_create_string_table(void *allocator_context) {
-    return 0;
+yarn_string_table *yarn_create_string_table() {
+    yarn_string_table *table = YARN_MALLOC(sizeof(yarn_string_table));
+    YARN_MAKE_DYNARRAY(table, yarn_parsed_entry, 512);
+    return table;
 }
 
 void yarn_destroy_string_table(yarn_string_table *table) {
-    return;
+    if (table->used > 0) {
+        /* TODO: fragmentation disaster. */
+        for(size_t i = 0; i < table->used; ++i) {
+            YARN_FREE(table->entries[i].id);
+            YARN_FREE(table->entries[i].text);
+            YARN_FREE(table->entries[i].file);
+            YARN_FREE(table->entries[i].node);
+        }
+    }
+
+    YARN_FREE(table->entries);
+    YARN_FREE(table);
 }
 
 int yarn_load_functions(yarn_dialogue *dialogue, yarn_function_entry *loading_functions) {
@@ -854,14 +946,13 @@ int yarn_load_program(
         program_length,
         program_buffer);
 
-    /* int r = yarn__load_string_table(dialogue, string_table_buffer, string_table_length); */
-    /* assert(r > 0); */
-
     return 1;
 }
 
-int yarn_load_csv(yarn_string_table *str_table, void *csv, size_t csv_size) {
-    return 0;
+int yarn_load_string_table(yarn_string_table *str_table, void *csv, size_t csv_size) {
+    int r = yarn__load_string_table(str_table, csv, csv_size);
+    assert(r > 0);
+    return 1;
 }
 
 /*
@@ -952,10 +1043,10 @@ uint32_t yarn__hashstr(char *str, size_t length) {
     return h;
 }
 
-int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps, void *alloc_ptr) {
+int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps) {
     if (used >= *caps) {
         size_t new_caps = (*caps) * 2;
-        void *new_ptr = yarn_realloc(alloc_ptr, *ptr, elem_size * new_caps);
+        void *new_ptr = YARN_REALLOC(*ptr, elem_size * new_caps);
 
         if (new_ptr) {
             *ptr = new_ptr;
@@ -969,8 +1060,8 @@ int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size
     return 0;
 }
 
-char *yarn__strndup(void *allocator, char *cloning, size_t length) {
-    char *result = yarn_malloc(allocator, length + 1);
+char *yarn__strndup(char *cloning, size_t length) {
+    char *result = YARN_MALLOC(length + 1);
     memset(result, 0, length + 1);
 
     for (size_t i = 0; i < length; ++i) {
@@ -1022,7 +1113,7 @@ void yarn__save_into_variable_array(void *istorage, char *var_name, yarn_value v
     /* variable does not exist: create new entry instead. */
     yarn__var_entry entry = {0};
     entry.hash = hash;
-    entry.name = yarn__strndup(storage->allocator, var_name, length);
+    entry.name = yarn__strndup(var_name, length);
     entry.original_str_length = length;
     entry.value = value;
 
@@ -1371,16 +1462,21 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore UB */
                 if (expr_count > 0) {
                     /* TODO: @malloc stack allocator would work wonderfully here */
-                    char **substitutions = yarn_malloc(dialogue->alloc_ptr, sizeof(char *) * expr_count);
+                    char **substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
                     n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
                         yarn_value value = yarn_pop_value(dialogue);
-                        char *subst = yarn_value_as_string(value);
+                        char *subst = yarn_format_value(value);
                         substitutions[i] = subst;
                     }
 
-                    command_text = yarn__substitute_string(command_text, substitutions, n_substitutions, dialogue->alloc_ptr);
+                    command_text = yarn__substitute_string(command_text, substitutions, n_substitutions);
+
+                    for (int i = 0; i < n_substitutions; ++i) {
+                        yarn_destroy_formatted_string(substitutions[i]);
+                    }
+                    YARN_FREE(substitutions);
                 }
             }
 
@@ -1391,7 +1487,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                 dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
             }
 
-            if (n_substitutions > 0) yarn_free(dialogue->alloc_ptr, command_text);
+            if (n_substitutions > 0) YARN_FREE(command_text);
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__JUMP:
@@ -1435,12 +1531,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore UB */
                 if (expr_count > 0) {
                     /* TODO: @malloc stack allocator would work wonderfully here */
-                    option.line.substitutions = yarn_malloc(dialogue->alloc_ptr, sizeof(char *) * expr_count);
+                    option.line.substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
                     option.line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
                         yarn_value value = yarn_pop_value(dialogue);
-                        char *subst = yarn_value_as_string(value);
+                        char *subst = yarn_format_value(value);
                         option.line.substitutions[i] = subst;
                     }
                 }
@@ -1472,7 +1568,6 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             dialogue->execution_state = YARN_EXEC_WAITING_OPTION_SELECTION;
             dialogue->option_handler(dialogue, dialogue->current_options.entries, (int)dialogue->current_options.used);
 
-            /* TODO: @Leak when to free this thing? */
             if (dialogue->execution_state == YARN_EXEC_WAITING_FOR_CONTINUE) {
                 dialogue->execution_state = YARN_EXEC_RUNNING;
             }
@@ -1497,13 +1592,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
                 if (expr_count > 0) {
                     /* TODO: @malloc stack allocator would work wonderfully here */
-                    line.substitutions = yarn_malloc(dialogue->alloc_ptr, sizeof(char *) * expr_count);
+                    line.substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
                     line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
                         yarn_value value = yarn_pop_value(dialogue);
-                        char *subst = yarn_value_as_string(value);
-                        assert(0 && "Line provider's work. ");
+                        char *subst = yarn_format_value(value);
                         line.substitutions[i] = subst;
                     }
                 }
@@ -1516,7 +1610,17 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                 dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
             }
 
-            if (line.substitutions) yarn_free(dialogue->alloc_ptr, line.substitutions);
+            /* line substitution is left without consumed. free now. */
+            if (line.n_substitutions > 0) {
+                for (int i = 0; i < line.n_substitutions; ++i) {
+                    YARN_FREE(line.substitutions[i]);
+                }
+                YARN_FREE(line.substitutions);
+
+                /* Consume substitutions. */
+                line.n_substitutions = 0;
+                line.substitutions   = 0;
+            }
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__PUSH_STRING:
@@ -1600,19 +1704,21 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
  */
 
 /* NOTE: returns malloc'ed string. */
-char *yarn__substitute_string(char *format, char **substs, int n_substs, void *alloc_ptr) {
+char *yarn__substitute_string(char *format, char **substs, int n_substs) {
+    assert(format && substs);
+
     size_t base_strlen = strlen(format);
-    size_t memory_size = base_strlen + (base_strlen & 16); /* Align to 16 */
+    size_t memory_size = base_strlen + (base_strlen & 15); /* Align to 16 */
 
     yarn__str_builder string_builder = {0};
-    YARN_MAKE_DYNARRAY(&string_builder, char, memory_size, alloc_ptr);
+    YARN_MAKE_DYNARRAY(&string_builder, char, memory_size);
 
     for (size_t i = 0; i < base_strlen; ++i) {
         if (format[i] == '{') {
             int replace_idx = -1;
             i++; /* skip '{' itself */
             while(format[i++] && format[i] != '}') {
-                assert(format[i] >= '0' && format[i] <= '9');
+                assert(format[i] >= '0' && format[i] <= '9'); /* TODO: what if there's more than 10 arguments */
                 replace_idx = replace_idx * 10 + (format[i] - '0');
             }
 
@@ -1641,10 +1747,10 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs, void *a
 /* ===========================================
  * Parsing strings / CSV tables.
  */
-yarn_parsed_entry *yarn__alloc_line(yarn_string_table *strings, void *alloc_ptr) {
+yarn_parsed_entry *yarn__alloc_line(yarn_string_table *strings) {
     assert(strings->entries != 0);
 
-    yarn__maybe_extend_dyn_array((void **)&strings->entries, sizeof(strings->entries[0]), strings->used, &strings->capacity, alloc_ptr);
+    yarn__maybe_extend_dyn_array((void **)&strings->entries, sizeof(strings->entries[0]), strings->used, &strings->capacity);
     return &strings->entries[strings->used++];
 }
 
@@ -1661,17 +1767,7 @@ const yarn__expect_csv_column expect_column[] = {
     { "lineNumber", sizeof("lineNumber") - 1 },
 };
 
-int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, size_t string_table_length) {
-    if (dialogue->strings.used > 0) {
-        /* TODO: fragmentation disaster. */
-        for(size_t i = 0; i < sizeof(dialogue->strings.used); ++i) {
-            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].id);
-            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].text);
-            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].file);
-            yarn_free(dialogue->alloc_ptr, dialogue->strings.entries[i].node);
-        }
-    }
-
+int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer, size_t string_table_length) {
     char *begin = string_table_buffer;
     size_t current     = 0;
     size_t advanced    = 0;
@@ -1682,7 +1778,7 @@ int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, 
     int parsing_first_line = 1;
     int in_quote = 0;
 
-    yarn_parsed_entry *line = yarn__alloc_line(&dialogue->strings, dialogue->alloc_ptr);
+    yarn_parsed_entry *line = yarn__alloc_line(table);
 
     while(current < string_table_length) {
         assert(current_column <= column_size);
@@ -1714,7 +1810,7 @@ int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, 
                     assert(current_column == column_size);
                     if (!parsing_first_line) {
                         line_count++;
-                        line = yarn__alloc_line(&dialogue->strings, dialogue->alloc_ptr);
+                        line = yarn__alloc_line(table);
                     } else {
                         parsing_first_line = 0;
                     }
@@ -1744,12 +1840,12 @@ int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, 
 
                         char *current_ptr = &begin[current];
                         if (strncmp(current_ptr, expect->word, expect->size) != 0) {
-                            char *dupped_str = yarn_malloc(dialogue->alloc_ptr, consumed_since + 1);
+                            char *dupped_str = YARN_MALLOC(consumed_since + 1);
                             memset(dupped_str, 0, consumed_since);
                             strncpy(dupped_str, current_ptr, consumed_since);
 
                             printf("Expect word difference: %s to %s\n", expect->word, dupped_str);
-                            yarn_free(dialogue->alloc_ptr, dupped_str);
+                            YARN_FREE(dupped_str);
                             return 0;
                         }
 
@@ -1801,7 +1897,7 @@ int yarn__load_string_table(yarn_dialogue *dialogue, void *string_table_buffer, 
                             ptrdiff_t mod = (actual_size) & (63);
                             actual_size += mod;
 
-                            char *dupped_str = yarn_malloc(dialogue->alloc_ptr, actual_size);
+                            char *dupped_str = YARN_MALLOC(actual_size);
 
                             memset(dupped_str, 0, actual_size);
                             strncpy(dupped_str, current_ptr, consumed_since);
