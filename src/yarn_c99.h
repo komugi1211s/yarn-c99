@@ -58,6 +58,8 @@ info:
 #if !defined(YARN_C99_DEF)
   #if defined(YARN_C99_STATIC)
     #define YARN_C99_DEF static
+  #elif defined(_MSC_VER) && defined(YARN_C99_DLL)
+    #define YARN_C99_DEF __declspec(dllexport)
   #else
     #if defined(__cplusplus)
       #define YARN_C99_DEF extern "C"
@@ -80,15 +82,6 @@ info:
 /* Yarn Dialogue:
  * corresponds to YarnSpinner.Dialogue in C# implementation. */
 typedef struct yarn_dialogue         yarn_dialogue;
-
-/* Yarn StringTable:
- * ROUGHLY corresponds to YarnSpinner.Compiler.StringTable in C# implementation.
- *
- * ============== IMPORTANT ==============
- * the CONTENT of this structure is a completely different thing from C# implementation.
- * ============== IMPORTANT ==============
- * */
-/* typedef struct yarn_string_table     yarn_string_table; */
 
 /* Yarn Value:
  * corresponds to YarnSpinner.Value in C# implementation.
@@ -226,6 +219,15 @@ typedef struct {
     char            *name;
     yarn_function   *function;
     int              param_count;
+} yarn_func_reg;
+
+typedef struct {
+    uint32_t         name_hash;
+    size_t           name_length;
+
+    char            *name;
+    yarn_function   *function;
+    int              param_count;
 } yarn_function_entry;
 
 typedef YARN_DYN_ARRAY(yarn_function_entry) yarn_library;
@@ -360,7 +362,7 @@ YARN_C99_DEF void  yarn_destroy_displayable_line(char *line);
 
 /* Function related stuff. */
 YARN_C99_DEF yarn_function_entry *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
-YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, yarn_function_entry *functions);
+YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *functions);
 
 /*
  * ====================================================
@@ -372,7 +374,7 @@ YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, y
  * Standard libraries.
  * based on c#'s standard libraries. definitions will be inside the IMPLEMENTATION block.
  */
-YARN_C99_DEF yarn_function_entry yarn__standard_libs[];
+YARN_C99_DEF yarn_func_reg yarn__standard_libs[];
 
 /* dynamic variable stuff. */
 typedef struct {
@@ -506,10 +508,12 @@ YARN_C99_DEF void       yarn__save_into_variable_array(void *istorage, char *var
 
 yarn_function_entry *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname) {
     size_t length = strlen(funcname);
+    uint32_t hash = yarn__hashstr(funcname, length);
 
     for (int i = 0; i < dialogue->library.used; ++i) {
         yarn_function_entry *f = &dialogue->library.entries[i];
-        if (strlen(f->name) != length) continue;
+        if (f->name_length != length) continue;
+        if (f->name_hash   != hash)   continue;
 
         if (strncmp(f->name, funcname, length) == 0) {
             return f;
@@ -892,12 +896,12 @@ void yarn_destroy_string_table(yarn_string_table *table) {
     YARN_FREE(table);
 }
 
-int yarn_load_functions(yarn_dialogue *dialogue, yarn_function_entry *loading_functions) {
+int yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *loading_functions) {
     assert(loading_functions);
     int inserted = 0;
 
     for(int i = 0;; ++i) {
-        yarn_function_entry f = loading_functions[i];
+        yarn_func_reg f = loading_functions[i];
         if (!f.name || !f.function) {
             /* I hit the sentinel! */
             break;
@@ -910,21 +914,30 @@ int yarn_load_functions(yarn_dialogue *dialogue, yarn_function_entry *loading_fu
          */
 
         int should_insert = 1;
-        size_t new_func_name_len = strlen(f.name);
+        size_t funcname_length = strlen(f.name);
+        uint32_t funcname_hash = yarn__hashstr((char*)f.name, funcname_length);
 
         for (int x = 0; x < dialogue->library.used; ++x) {
             yarn_function_entry *entry = &dialogue->library.entries[x];
-            size_t entry_name_len = strlen(entry->name);
 
-            if (entry_name_len != new_func_name_len) continue;
-            if (strncmp(f.name, entry->name, entry_name_len) != 0) continue;
+            if (entry->name_length != funcname_length) continue;
+            if (entry->name_hash   != funcname_hash)   continue;
+            if (strncmp(f.name, entry->name, funcname_length) != 0) continue;
 
             printf("Multiple declaration of same name.\n   conflicted name: %s\n", f.name);
             assert(0 && "Multiple declaration of same name");
         }
 
         if (should_insert) {
-            YARN_DYNARR_APPEND(&dialogue->library, f);
+            yarn_function_entry ent = {0};
+
+            ent.name_hash   = funcname_hash;
+            ent.name_length = funcname_length;
+            ent.name        = f.name;
+            ent.function    = f.function;
+            ent.param_count = f.param_count;
+
+            YARN_DYNARR_APPEND(&dialogue->library, ent);
             inserted++;
         }
     }
@@ -1256,7 +1269,7 @@ yarn_value yarn__bool_not(yarn_dialogue *dialogue) {
     return yarn_bool(!neg);
 }
 
-yarn_function_entry yarn__standard_libs[] = {
+yarn_func_reg yarn__standard_libs[] = {
     /* Numbers */
     { "Number.Add",      yarn__number_add,      2 },
     { "Number.Minus",    yarn__number_sub,      2 },
