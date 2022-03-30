@@ -1715,11 +1715,14 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs) {
 
     for (size_t i = 0; i < base_strlen; ++i) {
         if (format[i] == '{') {
-            int replace_idx = -1;
-            i++; /* skip '{' itself */
-            while(format[i++] && format[i] != '}') {
-                assert(format[i] >= '0' && format[i] <= '9'); /* TODO: what if there's more than 10 arguments */
-                replace_idx = replace_idx * 10 + (format[i] - '0');
+            i += 1;
+
+            int replace_idx = 0;
+            char c = 0;
+            while((c = format[i]) && c != '}') {
+                assert(c >= '0' && c <= '9'); /* TODO: what if there's more than 10 arguments */
+                replace_idx = replace_idx * 10 + (c - '0');
+                i++;
             }
 
             assert(format[i] == '}');
