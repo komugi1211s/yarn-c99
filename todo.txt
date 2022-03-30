@@ -1,2 +1,0 @@
-1. handle command / register command
-2. default "if visited" check

@@ -51,15 +51,28 @@ info:
 #include <stdint.h>
 
 /*
- * TODO: cleanup
- * TODO: assert crusade (some error should be reported to game, instead of crashing outright)
+ * TODO:
+ *
+ * - cleanup, tidy-up
+ * - more consistent memory handling (malloc festival with varying lifetime invites serious disaster)
+ *   - (@intern)         some wasteful string allocation should be interned instead.
+ *   - (@allocator)      unstable / inconsistent lifetime, cause of fragmentation, not using YARN_MALLOC, etc
+ *   - (@data-structure) performing slow lookups that can be solved with appropriate data structure.
+ *
+ * - assert crusade (some error should be reported to game, instead of crashing outright)
+ *   - (@logging) logging function should report this.
+ *
+ * - make feeling closer to C# (simulate garbage-collected string with allocator?)
+ *   - (@deviation) have to consult to other users, or weird design decisions.
+ *   - (@limit)     unnecessary limit that still remains in code because it was easier to do that way. not anymore. fix
+ *
+ * - more tests (most of the code feels pretty fragile, though this should be done after most of the todo above is done)
+ * - compile without protobuf (create converter? this can't be that hard, just receive generated code and reallocate everything into my own program defined here.)
  * */
 
 #if !defined(YARN_C99_DEF)
   #if defined(YARN_C99_STATIC)
     #define YARN_C99_DEF static
-  #elif defined(_MSC_VER) && defined(YARN_C99_DLL)
-    #define YARN_C99_DEF __declspec(dllexport)
   #else
     #if defined(__cplusplus)
       #define YARN_C99_DEF extern "C"
@@ -72,9 +85,6 @@ info:
 #define YARN_CONCAT1(a, b) a##b
 #define YARN_CONCAT(a, b) YARN_CONCAT1(a, b)
 #define YARN_LEN(n) (sizeof(n)/(sizeof(0[n])))
-
-#define YARN_KB(n) ((size_t)(n) * 1024)
-#define YARN_MB(n) ((size_t)(n) * 1024 * 1024)
 
 #define YARN_STATIC_ASSERT(cond, ident_message) \
     typedef char YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__))[(cond) ? 1 : -1];
@@ -141,7 +151,7 @@ struct yarn_variable_storage {
 };
 
 typedef enum {
-    YARN_VALUE_NONE, /* corresponds to null, although it's not valid in 2.0 */
+    YARN_VALUE_NONE = 0, /* corresponds to null, although it's not valid in 2.0 */
     YARN_VALUE_STRING,
     YARN_VALUE_BOOL,
     YARN_VALUE_FLOAT,
@@ -157,13 +167,13 @@ struct yarn_value {
 };
 
 /*
- * TODO: recipe for fragmentation disaster. fix it
+ * TODO: @allocator recipe for fragmentation disaster. fix it
  * */
 typedef struct {
-    char *id;           /* TODO: @interning can be interned. */
+    char *id;
     char *text;
-    char *file;         /* TODO: @interning can be interned. */
-    char *node;         /* TODO: @interning can be interned. */
+    char *file;         /* TODO: @intern can be interned. */
+    char *node;         /* TODO: @intern can be interned. */
     int   line_number;
 } yarn_parsed_entry;
 
@@ -171,7 +181,7 @@ typedef struct {
     char *id;
 
     int  n_substitutions;
-    char **substitutions; /* TODO: @interning fragmentation disaster */
+    char **substitutions; /* TODO: @allocator fragmentation disaster */
 } yarn_line;
 
 typedef struct {
@@ -189,7 +199,7 @@ typedef struct {
 
 /* =============================================
  * Yarn functions:
- * TODO: match it to C# implementation. SUBJECT TO CHANGE
+ * TODO: @deviation match it to C# implementation. SUBJECT TO CHANGE
  *
  * for now, it works similar to how Lua's function works,
  * but much more barebone. you have to know how VM works.
@@ -262,17 +272,18 @@ YARN_C99_DEF yarn_node_complete_handler_func     yarn__stub_node_complete_handle
 YARN_C99_DEF yarn_dialogue_complete_handler_func yarn__stub_dialogue_complete_handler;
 YARN_C99_DEF yarn_prepare_for_lines_handler_func yarn__stub_prepare_for_lines_handler;
 
-/* TODO: same as lua. */
+/* TODO: @deviation C# version allows more than this. */
 #define YARN_STACK_CAPACITY 256
 
 /* Protobuf stuff. */
 struct Yarn__Program;
+struct Yarn__Node;
 struct Yarn__Instruction;
 
 struct yarn_dialogue {
     // ProtobufCAllocator *program_allocator;
 
-    Yarn__Program      *program;
+    struct Yarn__Program *program;
     yarn_string_table  *strings;
     yarn_exec_state     execution_state;
 
@@ -286,7 +297,7 @@ struct yarn_dialogue {
     yarn_prepare_for_lines_handler_func *prepare_for_lines_handler;
 
     yarn_variable_storage storage;
-    yarn_library library;     /* TODO: should it be a hash map? */
+    yarn_library library; /* TODO: @data-structure should it be a hash map? */
 
     yarn_option_set current_options;
     yarn_value stack[YARN_STACK_CAPACITY];
@@ -322,7 +333,7 @@ YARN_C99_DEF yarn_value yarn_none(void);
 YARN_C99_DEF yarn_value yarn_float(float real);
 YARN_C99_DEF yarn_value yarn_int(int integer);
 YARN_C99_DEF yarn_value yarn_bool(int boolean);
-YARN_C99_DEF yarn_value yarn_string(char *string); /* TODO: this does not copy string!! */
+YARN_C99_DEF yarn_value yarn_string(char *string); /* TODO: @allocator this does not copy string!! */
 
 /* unravels value. */
 YARN_C99_DEF char *yarn_value_as_string(yarn_value value);
@@ -384,7 +395,7 @@ typedef struct {
     yarn_value value;
 } yarn__var_entry;
 
-typedef YARN_DYN_ARRAY(yarn__var_entry) yarn__var_array;
+typedef YARN_DYN_ARRAY(yarn__var_entry) yarn__var_array; /* TODO: @data-structure should it be a hash map? */
 
 /* Hashes string. */
 YARN_C99_DEF uint32_t yarn__hashstr(char *str, size_t strlength);
@@ -399,9 +410,6 @@ YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size
 /*
  * allocates line from current active string repo.
  * essentially pushing line into an array and returning empty string line.
- *
- * TODO: @interning -- this function will be converted into interning string
- * once I'm done with basics.
  */
 YARN_C99_DEF yarn_parsed_entry *yarn__alloc_line(yarn_string_table *string_table);
 
@@ -414,8 +422,6 @@ YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_su
  * parses csv and loads up into string repo.
  * works under the assumption that you (are loading/loaded) the corresponding program.
  * frees already loaded string table if it exists.
- *
- * TODO: subject to cleanup
  */
 YARN_C99_DEF int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer, size_t string_table_length);
 
@@ -424,7 +430,7 @@ YARN_C99_DEF int yarn__load_string_table(yarn_string_table *table, void *string_
  * works under the assumption that you already have working program loaded,
  * and vm is in the running state.
  */
-YARN_C99_DEF void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst);
+YARN_C99_DEF void yarn__run_instruction(yarn_dialogue *dialogue, struct Yarn__Instruction *inst);
 
 /*
  * find instruction index based on label.
@@ -471,7 +477,7 @@ YARN_C99_DEF void       yarn__save_into_variable_array(void *istorage, char *var
 
 #include <assert.h>
 #include <string.h> /* for strncmp, memset */
-#include <stdio.h>  /* TODO: cleanup. basically here for printf debugging */
+#include <stdio.h>  /* TODO: @cleanup cleanup. basically here for printf debugging */
 
 #if !defined(YARN_MALLOC) || !defined(YARN_FREE) || !defined(YARN_REALLOC)
   #if !defined(YARN_MALLOC) && !defined(YARN_FREE) && !defined(YARN_REALLOC)
@@ -593,8 +599,6 @@ int yarn_value_as_bool(yarn_value value) {
 
 char *yarn_format_value(yarn_value value) {
     switch(value.type) {
-        case YARN_VALUE_NONE:
-            return "None";
 
         case YARN_VALUE_BOOL:
             return (!!value.values.v_bool) ? "true" : "false";
@@ -609,6 +613,10 @@ char *yarn_format_value(yarn_value value) {
 
             return yarn__strndup(temp, result_length);
         } break;
+
+        case YARN_VALUE_NONE:
+        default:
+            return "None";
     }
 }
 
@@ -661,8 +669,8 @@ int yarn_continue(yarn_dialogue *dialogue) {
     dialogue->execution_state = YARN_EXEC_RUNNING;
 
     while(dialogue->execution_state == YARN_EXEC_RUNNING) {
-        Yarn__Node *node = dialogue->program->nodes[dialogue->current_node]->value;
-        Yarn__Instruction *instr = node->instructions[dialogue->current_instruction];
+        struct Yarn__Node *node = dialogue->program->nodes[dialogue->current_node]->value;
+        struct Yarn__Instruction *instr = node->instructions[dialogue->current_instruction];
 
         yarn__run_instruction(dialogue, instr);
         dialogue->current_instruction++;
@@ -673,7 +681,7 @@ int yarn_continue(yarn_dialogue *dialogue) {
             yarn__reset_state(dialogue); /* original version has a setter that resets VM state when operation stops. */
 
             dialogue->dialogue_complete_handler(dialogue);
-            /* TODO: log message */
+            /* TODO: @logging log message */
         }
     }
 
@@ -735,7 +743,7 @@ int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
     size_t length = strlen(node_name);
     int index = -1;
 
-    Yarn__Node *node = 0;
+    struct Yarn__Node *node = 0;
     for (int i = 0; i < dialogue->program->n_nodes; ++i) {
         if (strncmp(dialogue->program->nodes[i]->key, node_name, length) == 0) {
             index = i;
@@ -758,7 +766,7 @@ int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
             char **ids = YARN_MALLOC(sizeof(void *) * node->n_instructions);
             int n_ids = 0;
             for (int i = 0; i < node->n_instructions; ++i) {
-                Yarn__Instruction *inst = node->instructions[i];
+                struct Yarn__Instruction *inst = node->instructions[i];
                 if(inst->opcode == YARN__INSTRUCTION__OP_CODE__RUN_LINE ||
                    inst->opcode == YARN__INSTRUCTION__OP_CODE__ADD_OPTION)
                 {
@@ -883,7 +891,7 @@ yarn_string_table *yarn_create_string_table() {
 
 void yarn_destroy_string_table(yarn_string_table *table) {
     if (table->used > 0) {
-        /* TODO: fragmentation disaster. */
+        /* TODO: @allocator fragmentation disaster. */
         for(size_t i = 0; i < table->used; ++i) {
             YARN_FREE(table->entries[i].id);
             YARN_FREE(table->entries[i].text);
@@ -910,7 +918,6 @@ int yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *loading_function
         /*
          * check if other function with the same name has been registered yet.
          * fail if true.
-         * TODO: @interning -- function name should be able to intern
          */
 
         int should_insert = 1;
@@ -1065,7 +1072,7 @@ int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size
             *ptr = new_ptr;
             *caps = new_caps;
         } else {
-            /* TODO: logging */
+            /* TODO: @logging */
         }
 
         return 1;
@@ -1468,13 +1475,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             int n_substitutions = 0;
 
             if (inst->n_operands > 1) {
-                /* TODO: same as implementation in C#. */
                 int expr_count = (int)inst->operands[1]->float_value;
 
                 /* NOTE: have to check if expr_count is not 0,
-                 * otherwise tries to do malloc(0) therefore UB */
+                 * otherwise tries to do malloc(0) therefore implementation-defined */
                 if (expr_count > 0) {
-                    /* TODO: @malloc stack allocator would work wonderfully here */
+                    /* TODO: @allocator stack allocator would work wonderfully here */
                     char **substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
                     n_substitutions = expr_count;
 
@@ -1537,13 +1543,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             option.destination_node = inst->operands[1]->string_value;
 
             if (inst->n_operands > 2) {
-                /* TODO: same as implementation in C#. */
                 int expr_count = (int)inst->operands[2]->float_value;
 
                 /* NOTE: have to check if expr_count is not 0,
-                 * otherwise tries to do malloc(0) therefore UB */
+                 * otherwise tries to do malloc(0) therefore implementation defined */
                 if (expr_count > 0) {
-                    /* TODO: @malloc stack allocator would work wonderfully here */
+                    /* TODO: @allocator stack allocator would work wonderfully here */
                     option.line.substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
                     option.line.n_substitutions = expr_count;
 
@@ -1575,7 +1580,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                 break;
             }
 
-            /* TODO: C# implementation copies the content of current option.
+            /* TODO: @deviation C# implementation copies the content of current option.
              *  I wonder why? */
 
             dialogue->execution_state = YARN_EXEC_WAITING_OPTION_SELECTION;
@@ -1597,14 +1602,13 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             line.id = key_operand->string_value;
 
             if (inst->n_operands > 1) {
-                /* TODO: same as implementation in C#. */
                 int expr_count = (int)inst->operands[1]->float_value;
 
                 /* NOTE: have to check if expr_count is not 0,
-                 * otherwise tries to do malloc(0) therefore UB */
+                 * otherwise tries to do malloc(0) therefore implementation defined */
 
                 if (expr_count > 0) {
-                    /* TODO: @malloc stack allocator would work wonderfully here */
+                    /* TODO: @allocator stack allocator would work wonderfully here */
                     line.substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
                     line.n_substitutions = expr_count;
 
@@ -1691,14 +1695,10 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
              *  but I decided to deviate slightly from original for no reason,
              *  and instead allows user to push/pop stack value on their own and
              *  get value instead.
-             *
-             *  to prevent going deeper into stack and popping important data,
-             *  I swap stack pointer to amount of parameter passed temporarily.
-             *  this way user receives an error (or crashes) when they try to pop more than they're intended.
              */
             int expect_stack_position = dialogue->stack_ptr - expect_params;
 
-            /* TODO: what if user allocates string here and return it?
+            /* TODO: @allocator what if user allocates string here and return it?
              * who holds ownership to that pointer ? */
             yarn_value value = func->function(dialogue);
             assert(expect_stack_position == dialogue->stack_ptr);
@@ -1733,7 +1733,7 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs) {
             int replace_idx = 0;
             char c = 0;
             while((c = format[i]) && c != '}') {
-                assert(c >= '0' && c <= '9'); /* TODO: what if there's more than 10 arguments */
+                assert(c >= '0' && c <= '9');
                 replace_idx = replace_idx * 10 + (c - '0');
                 i++;
             }
@@ -1847,7 +1847,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                         assert(column_size < YARN_LEN(expect_column));
                         const yarn__expect_csv_column *expect = &expect_column[column_size];
 
-                        /* TODO: handle more gracefully. */
+                        /* TODO: @logging handle more gracefully. */
                         size_t consumed_since = advanced - current;
                         if (expect->size != consumed_since) {
                             printf("Expect size difference: %zu to %zu\n", expect->size, consumed_since);
@@ -1868,7 +1868,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                         column_size++;
                     } else {
 
-                        /* NOTE: @CSVParsing
+                        /* TODO: @deviation
                          * this part of the code must parse line number as an
                          * integer.
                          * */
@@ -1887,12 +1887,12 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
 
                         char *current_ptr = &begin[current];
                         if (current_column == 4) {
-                            /* TODO: let's limit line size to 65535 for now. */
+                            /* TODO: @limit let's limit line size to 65535 for now. */
                             assert(consumed_since <= 5 && "line number size more than 65535 (todo)");
 
                             int result_number = 0;
                             for (int i = 0; i < consumed_since; ++i) {
-                                /* TODO: handle other than ascii */
+                                /* TODO: @limit handle other than ascii */
                                 char c = begin[current+i];
                                 int  n = c - '0';
                                 assert((n >= 0 && n <= 9) && "number evaluated to something different");
