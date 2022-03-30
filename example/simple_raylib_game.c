@@ -72,6 +72,7 @@ void render_sentence(yarn_dialogue *d, int x, int y) {
         if (sentence_count == sentence_length) {
             mode = MD_NONE;
             yarn_continue(d);
+            return;
         } else {
             sentence_count = sentence_length - 2;
         }
@@ -117,6 +118,7 @@ void render_options(yarn_dialogue *d, int x, int y) {
             int key = o->id + '0';
 
             if (IsKeyPressed(key)) {
+                mode = MD_NONE;
                 yarn_select_option(d, o->id);
                 yarn_continue(d);
                 return;
