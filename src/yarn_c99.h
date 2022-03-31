@@ -1896,9 +1896,6 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs) {
     size_t base_strlen = strlen(format);
     size_t allocate_size = base_strlen * 2;
 
-    ptrdiff_t mod = allocate_size & 63; /* align to 64 */
-    if (mod > 0) allocate_size + (64 - mod);
-
     yarn__str_builder string_builder = {0};
     YARN_MAKE_DYNARRAY(&string_builder, char, allocate_size);
 
@@ -2018,7 +2015,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                 } else {
                     if (parsing_first_line) {
                         assert(column_count < YARN_LEN(expect_column));
-                        yarn__expect_csv_column *expect = &expect_column[column_count];
+                        const yarn__expect_csv_column *expect = &expect_column[column_count];
 
                         /* TODO: @logging handle more gracefully. */
                         size_t consumed_since = advanced - current;
@@ -2029,9 +2026,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
 
                         char *current_ptr = &begin[current];
                         if (strncmp(current_ptr, expect->word, expect->size) != 0) {
-                            char *dupped_str = YARN_MALLOC(consumed_since + 1);
-                            memset(dupped_str, 0, consumed_since);
-                            strncpy(dupped_str, current_ptr, consumed_since);
+                            char *dupped_str = yarn__strndup(current_ptr, consumed_since);
 
                             printf("Expect word difference: %s to %s\n", expect->word, dupped_str);
                             YARN_FREE(dupped_str);
@@ -2080,16 +2075,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
 
                             line->line_number = result_number;
                         } else {
-                            /* NOTE:
-                             * aligns memory to more than 64 */
-                            size_t actual_size = consumed_since + 1;
-                            ptrdiff_t mod = (actual_size) & 63;
-                            actual_size += (mod != 0) & (64 - mod) : 0;
-
-                            char *dupped_str = YARN_MALLOC(actual_size);
-
-                            memset(dupped_str, 0, actual_size);
-                            strncpy(dupped_str, current_ptr, consumed_since);
+                            char *dupped_str = yarn__strndup(current_ptr, consumed_since);
 
                             /* super complicated for just removing double quotation though. */
                             char *has_dquote_escaped = 0;
@@ -2129,5 +2115,6 @@ done:
     assert(in_quote == 0 && "Unexpected eof while parsing double quotation");
     return 1;
 }
+
 
 #endif

@@ -7,8 +7,8 @@ IF NOT EXIST dist (
 
 setlocal
 
-set CLFLAGS=/Zi /W1 /WX /Fo"./dist/" /Fd"./dist/"
-set LFLAGS=/INCREMENTAL:NO /pdb:"./dist/" /out:"./dist/main.exe" /NODEFAULTLIB:library /DEBUG:FULL
+set CLFLAGS=/Zi /W2 /WX /Fo"./dist/" /Fd"./dist/"
+set LFLAGS=/INCREMENTAL:NO /pdb:"./dist/" /out:"./dist/main.exe"
 cl.exe %CLFLAGS% ./src/main.c /link %LFLAGS%
 
 endlocal

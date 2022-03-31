@@ -7,7 +7,7 @@
 
 /*
  changing this define to 0 will still compile,
- but cause a link error.
+ but will cause a link error.
 */
 
 #define COMPILE_WITH_PROTOBUF 1
@@ -144,6 +144,7 @@ void yarn_handle_command(yarn_dialogue *dialogue, char *cmd) {
     printf("Command fired: %s\n", cmd);
     yarn_continue(dialogue);
 }
+#define _CRT_SECURE_NO_WARNINGS 1
 
 char *read_entire_file(char *file_name, size_t *bytes_read) {
     assert(file_name && bytes_read);

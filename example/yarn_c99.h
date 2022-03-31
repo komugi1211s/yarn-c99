@@ -48,6 +48,7 @@ info:
 #if !defined(YARN_C99_INCLUDE)
 #define YARN_C99_INCLUDE
 
+#include <stddef.h>
 #include <stdint.h>
 
 /*
@@ -71,57 +72,43 @@ info:
  * */
 
 #if !defined(YARN_C99_DEF)
-  #if defined(YARN_C99_STATIC)
-    #define YARN_C99_DEF static
-  #else
-    #if defined(__cplusplus)
-      #define YARN_C99_DEF extern "C"
-    #else
-      #define YARN_C99_DEF extern
-    #endif
-  #endif
+  #define YARN_C99_DEF extern
 #endif
 
-#define YARN_CONCAT1(a, b) a##b
-#define YARN_CONCAT(a, b) YARN_CONCAT1(a, b)
-#define YARN_LEN(n) (sizeof(n)/(sizeof(0[n])))
-
-#define YARN_STATIC_ASSERT(cond, ident_message) \
-    typedef char YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__))[(cond) ? 1 : -1];
-
 /* Yarn Dialogue:
- * corresponds to YarnSpinner.Dialogue in C# implementation. */
-typedef struct yarn_dialogue         yarn_dialogue;
+ * corresponds to YarnSpinner.Dialogue in C# implementation.
+ * it is the core of this library.
+ * */
+typedef struct yarn_dialogue yarn_dialogue;
 
 /* Yarn Value:
  * corresponds to YarnSpinner.Value in C# implementation.
  * */
-typedef struct yarn_value            yarn_value;
+typedef struct yarn_value yarn_value;
 
 /* Yarn Variable Storage:
  * corresponds to YarnSpinner.IVariableStorage in C# implementation.
  * */
 typedef struct yarn_variable_storage yarn_variable_storage;
 
+
 /* =========================================
  * Interface for variable storage:
- *   C does not have any OOP capability (besides EXTREMELY SIMPLE inheritance hack),
- *   so in C99 port it uses function pointer + context data to simulate virtual functions.
- *
  * For Start:
- *   you can do this to create dynamic array based storage:
- *     yarn_variable_storage storage = yarn_create_default_storage(NULL);
- *     yarn_dialogue *dialogue = yarn_create_dialogue(NULL, storage);
+ *   you can make default storage:
+ *     yarn_variable_storage storage = yarn_create_default_storage();
+ *     yarn_dialogue *dialogue = yarn_create_dialogue(storage);
  *
  *   and do this when it's done
  *     yarn_destroy_dialogue(dialogue);
  *     yarn_destroy_default_storage(storage);
  *
- *   default storage is a very barebone storage that uses hashmap underneath.
+ *   default storage is the same as InMemoryVariableStorage in C# implementation,
+ *   it uses hashmap underneath.
  *
  * alternatively, you can create your own storage:
  *   1. make functions, like this
- *     struct SomethingStore {}
+ *     struct SomethingStore {};
  *     yarn_value load_func(SomethingStore *store, char *varname) { ... }
  *     void       save_func(SomethingStore *store, char *varname, yarn_value value) { ... }
  *
@@ -135,7 +122,7 @@ typedef struct yarn_variable_storage yarn_variable_storage;
  *     istorage.save = save_func;
  *
  *   3. pass it into dialogue
- *     yarn_dialogue *dialogue = yarn_create_dialogue(NULL, istorage);
+ *     yarn_dialogue *dialogue = yarn_create_dialogue(istorage);
  *
  */
 
@@ -164,17 +151,44 @@ struct yarn_value {
     } values;
 };
 
+#define YARN_DYN_ARRAY(ty) struct { \
+    size_t used; \
+    size_t capacity; \
+    ty *entries; \
+}
+
 /* =========================================
- * Hashmap declaration.
+ * Hashmap.
+ * Unlike dynamic array above, this one is also usable in user space.
+ *
+ * TODO: IT IS NOT TYPESAFE!!!!!!!!!!!!!!!!!!!:
+ *   kvcreate takes type to it's first argument so it SEEMS like it is typesafe,
+ *   but it's not. it does not store the information. it's misleading.
+ *   it is actually storing the SIZE of the type. more on that below.
+ * 
+ * overview of how it's implemented:
+ *   linear-probing with djb2 hashing.
+ *   only supports char* as key, and will be copied on push.
+ * 
+ *   internal data is stored in char* buffer.
+ *   like the diagram shown below;
+ *
+ * |================= entire buffer ==================|
+ * [header-data|actual value][header-data|actual value]
+ * |===== one "chunk"  =====|
+ *
+ * with map->element_size being set to the size of actual value.
+ * on kvpush, it will take the size of passed value, and check against the map it's being inserted to,
+ * and fires assertion error if does not.
+ *
+ * TODO: @testing -- this works, but complete and thorough test must be done.
  *
  * create hashmap with:
- *  yarn_kvcreate(&map, sizeof(element), capacity);
+ *  map = yarn_kvcreate(element, capacity);
+ *
  *
  *  then, push with:
  *  yarn_kvpush(&map, "hello", value);
- *
- *  which is macro to:
- *  yarn__kvpair_pushsize(&map, "hello", &value, sizeof(value));`
  */
 
 typedef struct {
@@ -187,7 +201,7 @@ typedef struct {
     char   *entries;
     size_t used;
     size_t capacity;
-    size_t element_size; /* kvpair's value's size. not the kvpair's size itself */
+    size_t element_size; /* size of the actual value it's made for, not the size of chunk */
 } yarn_kvmap;
 
 #define yarn_kvcreate(element, caps) \
@@ -203,10 +217,22 @@ typedef struct {
     yarn__kvmap_get((map), (key), (value_ptr), ((value_ptr) ? sizeof(*value_ptr) : 0))
 
 #define yarn_kvhas(map, key) \
-    yarn__kvmap_get((map), (key), 0, 0)
+    (yarn__kvmap_get((map), (key), 0, 0) != -1)
 
 #define yarn_kvdelete(map, key) \
     yarn__kvmap_delete((map), (key))
+
+/* =============================================
+ * Yarn line:
+ * Same as C# implementation.
+ */
+
+typedef struct {
+    char *id;
+
+    int  n_substitutions;
+    char **substitutions; /* TODO: @allocator fragmentation disaster */
+} yarn_line;
 
 /*
  * TODO: @allocator recipe for fragmentation disaster. fix it
@@ -219,12 +245,13 @@ typedef struct {
     int   line_number;
 } yarn_parsed_entry;
 
-typedef struct {
-    char *id;
+typedef YARN_DYN_ARRAY(yarn_parsed_entry) yarn_string_table;
 
-    int  n_substitutions;
-    char **substitutions; /* TODO: @allocator fragmentation disaster */
-} yarn_line;
+
+/* =============================================
+ * Yarn options:
+ * Same as C# implementation.
+ */
 
 typedef struct {
     yarn_line line;
@@ -233,11 +260,7 @@ typedef struct {
     int is_available; /* 1 = true, 0 = false */
 } yarn_option;
 
-#define YARN_DYN_ARRAY(ty) struct { \
-    size_t used; \
-    size_t capacity; \
-    ty *entries; \
-}
+typedef YARN_DYN_ARRAY(yarn_option) yarn_option_set;
 
 /* =============================================
  * Yarn functions:
@@ -256,7 +279,7 @@ typedef struct {
  *    }
  *
  * then create const array with sentinel at the bottom:
- *    yarn_function_entry entries[] = {
+ *    yarn_func_reg entries[] = {
  *      { "add", add, 2 }, // name, function pointer, argument count
  *      { 0, 0, 0 } // Sentinel
  *    };
@@ -273,27 +296,16 @@ typedef struct {
 } yarn_func_reg;
 
 typedef struct {
-    uint32_t         name_hash;
-    size_t           name_length;
-
-    char            *name;
     yarn_function   *function;
     int              param_count;
 } yarn_function_entry;
 
-typedef YARN_DYN_ARRAY(yarn_function_entry) yarn_library;
+typedef yarn_kvmap yarn_library;
 
-typedef enum {
-    YARN_EXEC_STOPPED = 0,
-    YARN_EXEC_WAITING_OPTION_SELECTION,
-    YARN_EXEC_WAITING_FOR_CONTINUE,
-    YARN_EXEC_DELIVERING_CONTENT,
-    YARN_EXEC_RUNNING,
-} yarn_exec_state;
-
-typedef YARN_DYN_ARRAY(yarn_parsed_entry) yarn_string_table;
-typedef YARN_DYN_ARRAY(yarn_option)       yarn_option_set;
-
+/* =============================================
+ * Yarn delegates:
+ * TODO: @deviation match it to C# implementation. SUBJECT TO CHANGE
+ */
 typedef void yarn_line_handler_func(yarn_dialogue *dialogue, yarn_line *line);
 typedef void yarn_option_handler_func(yarn_dialogue *dialogue, yarn_option *options, int options_count);
 typedef void yarn_command_handler_func(yarn_dialogue *dialogue, char *command);
@@ -313,6 +325,12 @@ YARN_C99_DEF yarn_node_complete_handler_func     yarn__stub_node_complete_handle
 YARN_C99_DEF yarn_dialogue_complete_handler_func yarn__stub_dialogue_complete_handler;
 YARN_C99_DEF yarn_prepare_for_lines_handler_func yarn__stub_prepare_for_lines_handler;
 
+
+/* =============================================
+ * Yarn Dialogue:
+ * A ported runtime from C# implementation.
+ */
+
 /* TODO: @deviation C# version allows more than this. */
 #define YARN_STACK_CAPACITY 256
 
@@ -320,6 +338,15 @@ YARN_C99_DEF yarn_prepare_for_lines_handler_func yarn__stub_prepare_for_lines_ha
 struct Yarn__Program;
 struct Yarn__Node;
 struct Yarn__Instruction;
+
+typedef enum {
+    YARN_EXEC_STOPPED = 0,
+    YARN_EXEC_WAITING_OPTION_SELECTION,
+    YARN_EXEC_WAITING_FOR_CONTINUE,
+    YARN_EXEC_DELIVERING_CONTENT,
+    YARN_EXEC_RUNNING,
+} yarn_exec_state;
+
 
 struct yarn_dialogue {
     // ProtobufCAllocator *program_allocator;
@@ -338,7 +365,7 @@ struct yarn_dialogue {
     yarn_prepare_for_lines_handler_func *prepare_for_lines_handler;
 
     yarn_variable_storage storage;
-    yarn_library library; /* TODO: @data-structure should it be a hash map? */
+    yarn_library library;
 
     yarn_option_set current_options;
     yarn_value stack[YARN_STACK_CAPACITY];
@@ -348,10 +375,8 @@ struct yarn_dialogue {
     int current_instruction;
 };
 
-/*
- * ====================================================
+/* ====================================================
  * Function declarations.
- * ====================================================
  * */
 
 /* Creation / Destroy functions. */
@@ -387,12 +412,15 @@ YARN_C99_DEF float yarn_value_as_float(yarn_value value);
 YARN_C99_DEF char *yarn_format_value(yarn_value value);
 YARN_C99_DEF void  yarn_destroy_formatted_string(char *formatted_string);
 
-/* manipulates Yarn VM. */
+/* check if yarn vm is currently running. */
 YARN_C99_DEF int yarn_is_active(yarn_dialogue *dialogue);
+
+/* spin up VM, until it hits operation that needs to be handled. */
 YARN_C99_DEF int yarn_continue(yarn_dialogue *dialogue);
 
-YARN_C99_DEF int yarn_set_node(yarn_dialogue *dialogue, char *node_name);
-YARN_C99_DEF int yarn_select_option(yarn_dialogue *dialogue, int select_option);
+
+YARN_C99_DEF int yarn_set_node(yarn_dialogue *dialogue, char *node_name); /* sets current node. */
+YARN_C99_DEF int yarn_select_option(yarn_dialogue *dialogue, int select_option); /* selects option, if option is active. */
 
 /* stack operations. */
 YARN_C99_DEF yarn_value yarn_pop_value(yarn_dialogue *dialogue);
@@ -406,14 +434,14 @@ YARN_C99_DEF void       yarn_store_variable(yarn_dialogue *dialogue, char *var_n
 
 /* loads line, and performs substitution.
  * NOTE:
- *    1. convert function consumes line. it is unsafe to access inner data after you've consumed the line.
+ *    1. convert function consumes line. it is unsafe to access inner data after you've called this function.
  *    2. returned value must be freed with yarn_destroy_displayable_line.
  * */
 YARN_C99_DEF char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line);
 YARN_C99_DEF void  yarn_destroy_displayable_line(char *line);
 
 /* Function related stuff. */
-YARN_C99_DEF yarn_function_entry *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
+YARN_C99_DEF yarn_function_entry  yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
 YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *functions);
 
 /*
@@ -422,21 +450,10 @@ YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, y
  * ====================================================
  * */
 
-/*
- * Standard libraries.
- * based on c#'s standard libraries. definitions will be inside the IMPLEMENTATION block.
- */
-YARN_C99_DEF yarn_func_reg yarn__standard_libs[];
-
-/* dynamic variable stuff. */
-typedef struct {
-    uint32_t   hash;
-    char      *name;
-    size_t     original_str_length;
-    yarn_value value;
-} yarn__var_entry;
-
-typedef YARN_DYN_ARRAY(yarn__var_entry) yarn__var_array; /* TODO: @data-structure should it be a hash map? */
+/* Standard libraries.
+ * based on c#'s standard libraries. definitions will be inside the IMPLEMENTATION block. 
+ * TODO: string is not supported, yet. */
+extern yarn_func_reg yarn__standard_libs[];
 
 /* Hashes string. */
 YARN_C99_DEF uint32_t yarn__hashstr(char *str, size_t strlength);
@@ -469,23 +486,13 @@ YARN_C99_DEF int yarn__kvmap_maybe_rehash(yarn_kvmap *map);
  */
 YARN_C99_DEF yarn_parsed_entry *yarn__alloc_line(yarn_string_table *string_table);
 
-/*
- * allocates new string with substituted value for {0}, {1}, {2}... format.
- */
+/* allocates new string with substituted value for {0}, {1}, {2}... format. */
 YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_substs);
 
-/*
- * parses csv and loads up into string repo.
- * works under the assumption that you (are loading/loaded) the corresponding program.
- * frees already loaded string table if it exists.
- */
+/* parses csv and loads up into string repo. */
 YARN_C99_DEF int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer, size_t string_table_length);
 
-/*
- * runs single instruction.
- * works under the assumption that you already have working program loaded,
- * and vm is in the running state.
- */
+/* runs single instruction. */
 YARN_C99_DEF void yarn__run_instruction(yarn_dialogue *dialogue, struct Yarn__Instruction *inst);
 
 /*
@@ -494,30 +501,20 @@ YARN_C99_DEF void yarn__run_instruction(yarn_dialogue *dialogue, struct Yarn__In
  */
 YARN_C99_DEF int yarn__find_instruction_point_for_label(yarn_dialogue *dialogue, char *label);
 
-/*
- * Resets the state of the dialogue.
- */
+/* Resets the state of the dialogue. */
 YARN_C99_DEF void yarn__reset_state(yarn_dialogue *dialogue);
 
-/*
- * get how many times the node has been visited.
- */
+/* get how many times the node has been visited. */
 YARN_C99_DEF int  yarn__get_visited_count(yarn_dialogue *dialogue, char *name);
 
-/*
- * uses static buffer to create node name. no free needed.
- * NOTE: it works under the assumption that node name never exceeds more than 1024 character
- */
+/* uses static buffer to create node name. no free needed.
+ * NOTE: it works under the assumption that node name never exceeds more than 1024 character */
 YARN_C99_DEF char *yarn__get_visited_name_for_node(char *name);
 
-/*
- * Asserts if the yarn dialogue can be continued.
- */
+/* Asserts if the yarn dialogue can be continued. */
 YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
 
-/*
- * functions for default (dynamic array based) storage.
- */
+/* functions for default (dynamic array based) storage. */
 YARN_C99_DEF yarn_value yarn__load_from_default_storage(void *istorage, char *var_name);
 YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *var_name, yarn_value value);
 #endif
@@ -547,6 +544,13 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
 #endif
 
 
+#define YARN_CONCAT1(a, b) a##b
+#define YARN_CONCAT(a, b) YARN_CONCAT1(a, b)
+#define YARN_LEN(n) (sizeof(n)/(sizeof(0[n])))
+
+#define YARN_STATIC_ASSERT(cond, ident_message) \
+    typedef char YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__))[(cond) ? 1 : -1];
+
 /*
  * Dynamic array stuff.
  */
@@ -568,21 +572,14 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
 #define YARN_DYNARR_POP(v, var) (((v)->used > 0) ? ((var) = ((v)->entries)[--((v)->used)], 1) : 0)
 
 
-yarn_function_entry *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname) {
+yarn_function_entry yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname) {
     size_t length = strlen(funcname);
     uint32_t hash = yarn__hashstr(funcname, length);
 
-    for (int i = 0; i < dialogue->library.used; ++i) {
-        yarn_function_entry *f = &dialogue->library.entries[i];
-        if (f->name_length != length) continue;
-        if (f->name_hash   != hash)   continue;
+    yarn_function_entry entry = {0};
+    int exists = yarn_kvget(&dialogue->library, funcname, &entry);
 
-        if (strncmp(f->name, funcname, length) == 0) {
-            return f;
-        }
-    }
-
-    return 0;
+    return entry;
 }
 
  /* simple helper for zero initialized value */
@@ -890,8 +887,8 @@ yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
     dialogue->dialogue_complete_handler = &yarn__stub_dialogue_complete_handler;
     dialogue->prepare_for_lines_handler = &yarn__stub_prepare_for_lines_handler;
 
-    YARN_MAKE_DYNARRAY(&dialogue->library,         yarn_function_entry, 32);
-    YARN_MAKE_DYNARRAY(&dialogue->current_options,         yarn_option, 32);
+    dialogue->library = yarn_kvcreate(yarn_function_entry, 32);
+    YARN_MAKE_DYNARRAY(&dialogue->current_options, yarn_option, 32);
 
     yarn_load_functions(dialogue, yarn__standard_libs);
     return dialogue;
@@ -911,8 +908,8 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
         }
     }
 
+    yarn_kvdestroy(&dialogue->library);
     YARN_FREE(dialogue->current_options.entries);
-    YARN_FREE(dialogue->library.entries);
     YARN_FREE(dialogue);
 }
 
@@ -969,38 +966,15 @@ int yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *loading_function
             break;
         }
 
-        /*
-         * check if other function with the same name has been registered yet.
-         * fail if true.
-         */
-
-        int should_insert = 1;
-        size_t funcname_length = strlen(f.name);
-        uint32_t funcname_hash = yarn__hashstr((char*)f.name, funcname_length);
-
-        for (int x = 0; x < dialogue->library.used; ++x) {
-            yarn_function_entry *entry = &dialogue->library.entries[x];
-
-            if (entry->name_length != funcname_length) continue;
-            if (entry->name_hash   != funcname_hash)   continue;
-            if (strncmp(f.name, entry->name, funcname_length) != 0) continue;
-
+        if(yarn_kvhas(&dialogue->library, f.name)) {
             printf("Multiple declaration of same name.\n   conflicted name: %s\n", f.name);
             assert(0 && "Multiple declaration of same name");
         }
 
-        if (should_insert) {
-            yarn_function_entry ent = {0};
-
-            ent.name_hash   = funcname_hash;
-            ent.name_length = funcname_length;
-            ent.name        = f.name;
-            ent.function    = f.function;
-            ent.param_count = f.param_count;
-
-            YARN_DYNARR_APPEND(&dialogue->library, ent);
-            inserted++;
-        }
+        yarn_function_entry ent = {0};
+        ent.function    = f.function;
+        ent.param_count = f.param_count;
+        yarn_kvpush(&dialogue->library, f.name, ent);
     }
 
     return inserted;
@@ -1521,19 +1495,19 @@ void yarn__check_if_i_can_continue(yarn_dialogue *dialogue) {
 }
 
 char *yarn__get_visited_name_for_node(char *name) {
-    static char yarn__internal_node_name[8][1024] = {0};
-    static int  yarn__internal_node_name_buffer_index = 0;
+    static char ring[8][1024] = {0};
+    static int  ringidx = 0;
 
-    if (yarn__internal_node_name_buffer_index == 7) yarn__internal_node_name_buffer_index = 0;
-    else yarn__internal_node_name_buffer_index += 1;
-    char *buffer = yarn__internal_node_name[yarn__internal_node_name_buffer_index];
+    char *buffer = ring[ringidx];
 
-    memset(buffer, 0, sizeof(yarn__internal_node_name[0]));
+    memset(buffer, 0, sizeof(ring[0]));
 
     /* to ensure that user will not accidentally access variable,
-     * use character that's guaranteed to be caught as operator by compiler. */
-    snprintf(buffer, sizeof(yarn__internal_node_name[0]) - 1,
-             ":+INTERNAL+: visited: %s", name);
+     * use space/parentheses for visited count
+     * (hoping that yarn spinner won't allow them as variable name) */
+    snprintf(buffer, sizeof(ring[0]) - 1, "(internal): visited node `%s`", name);
+
+    ringidx = (ringidx + 1) % 8;
     return buffer;
 }
 
@@ -1583,35 +1557,40 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
         {
             assert(inst->n_operands >= 1);
             char *varname = inst->operands[0]->string_value;
-
             yarn_value v = yarn_load_variable(dialogue, varname);
+
+            /* check if there's an entry in initial_values */
             if (v.type == YARN_VALUE_NONE) {
                 size_t varname_length = strlen(varname);
                 uint32_t varname_hash = yarn__hashstr(varname, varname_length);
+                Yarn__Program__InitialValuesEntry *iv;
+
                 for (int i = 0; i < dialogue->program->n_initial_values; ++i) {
-                    Yarn__Program__InitialValuesEntry *iv = dialogue->program->initial_values[i];
-                    size_t str_length = strlen(iv->key);
-                    uint32_t hash = yarn__hashstr(iv->key, str_length);
+                    iv = dialogue->program->initial_values[i];
+                    size_t iv_length = strlen(iv->key);
+                    uint32_t iv_hash = yarn__hashstr(iv->key, iv_length);
 
-                    if(varname_hash == hash && str_length == varname_length) {
-                        if (strncmp(varname, iv->key, varname_length) == 0) {
-                            switch(iv->value->value_case) {
-                                case YARN__OPERAND__VALUE_STRING_VALUE:
-                                    v = yarn_string(iv->value->string_value);
-                                    break;
+                    if (iv_hash   != varname_hash)   continue;
+                    if (iv_length != varname_length) continue;
+                    if (strncmp(varname, iv->key, iv_length) != 0) continue;
 
-                                case YARN__OPERAND__VALUE_BOOL_VALUE:
-                                    v = yarn_bool(iv->value->bool_value);
-                                    break;
+                    /* matched! */
 
-                                case YARN__OPERAND__VALUE_FLOAT_VALUE:
-                                    v = yarn_float(iv->value->float_value);
-                                    break;
+                    switch(iv->value->value_case) {
+                        case YARN__OPERAND__VALUE_STRING_VALUE:
+                            v = yarn_string(iv->value->string_value);
+                            break;
 
-                                default:
-                                    break;
-                            }
-                        }
+                        case YARN__OPERAND__VALUE_BOOL_VALUE:
+                            v = yarn_bool(iv->value->bool_value);
+                            break;
+
+                        case YARN__OPERAND__VALUE_FLOAT_VALUE:
+                            v = yarn_float(iv->value->float_value);
+                            break;
+
+                        default:
+                            break;
                     }
                 }
             }
@@ -1705,9 +1684,10 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
         case YARN__INSTRUCTION__OP_CODE__JUMP:
         {
-            assert(dialogue->stack[dialogue->stack_ptr - 1].type == YARN_VALUE_STRING);
+            yarn_value *jump_to = &dialogue->stack[dialogue->stack_ptr - 1];
+            assert(jump_to->type == YARN_VALUE_STRING);
 
-            char *label = dialogue->stack[dialogue->stack_ptr - 1].values.v_string;
+            char *label = jump_to->values.v_string;
             dialogue->current_instruction = yarn__find_instruction_point_for_label(dialogue, label) - 1;
         } break;
 
@@ -1867,14 +1847,13 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
             int actual_params = yarn_value_as_int(yarn_pop_value(dialogue));
             char *func_name = key_operand->string_value;
-            yarn_function_entry *func = yarn_get_function_with_name(dialogue, func_name);
-            if (!func) {
+            yarn_function_entry func = yarn_get_function_with_name(dialogue, func_name);
+            if (!func.function) {
                 printf("Function named `%s`(param count %d) does not exist.\n", func_name, actual_params);
                 assert(0);
             }
-            assert(func->function);
 
-            int expect_params = func->param_count;
+            int expect_params = func.param_count;
             if (expect_params != actual_params) {
                 printf("[YARN SPINNER]: Runtime error -- function named %s expects %d arguments, but %d provided.\n",
                         func_name, expect_params, actual_params);
@@ -1894,7 +1873,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
             /* TODO: @allocator what if user allocates string here and return it?
              * who holds ownership to that pointer ? */
-            yarn_value value = func->function(dialogue);
+            yarn_value value = func.function(dialogue);
             assert(expect_stack_position == dialogue->stack_ptr);
 
             if (value.type != YARN_VALUE_NONE) {
@@ -1915,10 +1894,10 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs) {
     assert(format && substs);
 
     size_t base_strlen = strlen(format);
-    size_t memory_size = base_strlen + (base_strlen & 15); /* Align to 16 */
+    size_t allocate_size = base_strlen * 2;
 
     yarn__str_builder string_builder = {0};
-    YARN_MAKE_DYNARRAY(&string_builder, char, memory_size);
+    YARN_MAKE_DYNARRAY(&string_builder, char, allocate_size);
 
     for (size_t i = 0; i < base_strlen; ++i) {
         if (format[i] == '{') {
@@ -1981,8 +1960,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
     char *begin = string_table_buffer;
     size_t current     = 0;
     size_t advanced    = 0;
-    size_t line_count  = 0;
-    int column_size    = 0;
+    int column_count   = 0;
     int current_column = 0;
 
     int parsing_first_line = 1;
@@ -1991,7 +1969,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
     yarn_parsed_entry *line = yarn__alloc_line(table);
 
     while(current < string_table_length) {
-        assert(current_column <= column_size);
+        assert(current_column <= column_count);
 
         switch(begin[advanced]) {
             /* We're done!! */
@@ -2017,9 +1995,8 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                 if (in_quote) {
                     advanced++;
                 } else {
-                    assert(current_column == column_size);
+                    assert(current_column == column_count);
                     if (!parsing_first_line) {
-                        line_count++;
                         line = yarn__alloc_line(table);
                     } else {
                         parsing_first_line = 0;
@@ -2036,10 +2013,9 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                 if (in_quote) {
                     advanced++;
                 } else {
-
                     if (parsing_first_line) {
-                        assert(column_size < YARN_LEN(expect_column));
-                        const yarn__expect_csv_column *expect = &expect_column[column_size];
+                        assert(column_count < YARN_LEN(expect_column));
+                        const yarn__expect_csv_column *expect = &expect_column[column_count];
 
                         /* TODO: @logging handle more gracefully. */
                         size_t consumed_since = advanced - current;
@@ -2050,16 +2026,14 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
 
                         char *current_ptr = &begin[current];
                         if (strncmp(current_ptr, expect->word, expect->size) != 0) {
-                            char *dupped_str = YARN_MALLOC(consumed_since + 1);
-                            memset(dupped_str, 0, consumed_since);
-                            strncpy(dupped_str, current_ptr, consumed_since);
+                            char *dupped_str = yarn__strndup(current_ptr, consumed_since);
 
                             printf("Expect word difference: %s to %s\n", expect->word, dupped_str);
                             YARN_FREE(dupped_str);
                             return 0;
                         }
 
-                        column_size++;
+                        column_count++;
                     } else {
 
                         /* TODO: @deviation
@@ -2101,16 +2075,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
 
                             line->line_number = result_number;
                         } else {
-                            /* NOTE:
-                             * aligns memory to more than 64 */
-                            size_t actual_size = consumed_since + 1;
-                            ptrdiff_t mod = (actual_size) & (63);
-                            actual_size += mod;
-
-                            char *dupped_str = YARN_MALLOC(actual_size);
-
-                            memset(dupped_str, 0, actual_size);
-                            strncpy(dupped_str, current_ptr, consumed_since);
+                            char *dupped_str = yarn__strndup(current_ptr, consumed_since);
 
                             /* super complicated for just removing double quotation though. */
                             char *has_dquote_escaped = 0;
@@ -2150,5 +2115,6 @@ done:
     assert(in_quote == 0 && "Unexpected eof while parsing double quotation");
     return 1;
 }
+
 
 #endif
