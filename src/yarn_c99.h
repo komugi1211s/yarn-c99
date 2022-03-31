@@ -117,9 +117,7 @@ typedef struct yarn_variable_storage yarn_variable_storage;
  *     yarn_destroy_dialogue(dialogue);
  *     yarn_destroy_default_storage(storage);
  *
- *   default storage is a very barebone storage that uses dynamic array underneath,
- *   and performs linear-time search every time you perform lookup operation.
- *   if your project is variable-heavy, this could cause a problem in game's performance.
+ *   default storage is a very barebone storage that uses hashmap underneath.
  *
  * alternatively, you can create your own storage:
  *   1. make functions, like this
@@ -165,6 +163,50 @@ struct yarn_value {
         float v_float;
     } values;
 };
+
+/* =========================================
+ * Hashmap declaration.
+ *
+ * create hashmap with:
+ *  yarn_kvcreate(&map, sizeof(element), capacity);
+ *
+ *  then, push with:
+ *  yarn_kvpush(&map, "hello", value);
+ *
+ *  which is macro to:
+ *  yarn__kvpair_pushsize(&map, "hello", &value, sizeof(value));`
+ */
+
+typedef struct {
+    uint32_t hash;
+    size_t   keylen;
+    char    *key;
+} yarn_kvpair_header;
+
+typedef struct {
+    char   *entries;
+    size_t used;
+    size_t capacity;
+    size_t element_size; /* kvpair's value's size. not the kvpair's size itself */
+} yarn_kvmap;
+
+#define yarn_kvcreate(element, caps) \
+    yarn__kvmap_create(sizeof(element), (caps))
+
+#define yarn_kvdestroy(map) \
+    yarn__kvmap_destroy((map))
+
+#define yarn_kvpush(map, key, value) \
+    yarn__kvmap_pushsize((map), (key), &(value), sizeof(value))
+
+#define yarn_kvget(map, key, value_ptr) \
+    yarn__kvmap_get((map), (key), (value_ptr), ((value_ptr) ? sizeof(*value_ptr) : 0))
+
+#define yarn_kvhas(map, key) \
+    (yarn__kvmap_get((map), (key), 0, 0) != -1)
+
+#define yarn_kvdelete(map, key) \
+    yarn__kvmap_delete((map), (key))
 
 /*
  * TODO: @allocator recipe for fragmentation disaster. fix it
@@ -222,7 +264,6 @@ typedef struct {
  * then call "yarn_load_functions"
  *    yarn_load_functions(dialogue, entries);
  */
-
 typedef yarn_value yarn_function(yarn_dialogue *dialogue);
 
 typedef struct {
@@ -232,15 +273,11 @@ typedef struct {
 } yarn_func_reg;
 
 typedef struct {
-    uint32_t         name_hash;
-    size_t           name_length;
-
-    char            *name;
     yarn_function   *function;
     int              param_count;
 } yarn_function_entry;
 
-typedef YARN_DYN_ARRAY(yarn_function_entry) yarn_library;
+typedef yarn_kvmap yarn_library;
 
 typedef enum {
     YARN_EXEC_STOPPED = 0,
@@ -297,7 +334,7 @@ struct yarn_dialogue {
     yarn_prepare_for_lines_handler_func *prepare_for_lines_handler;
 
     yarn_variable_storage storage;
-    yarn_library library; /* TODO: @data-structure should it be a hash map? */
+    yarn_library library;
 
     yarn_option_set current_options;
     yarn_value stack[YARN_STACK_CAPACITY];
@@ -372,7 +409,7 @@ YARN_C99_DEF char *yarn_convert_to_displayable_line(yarn_string_table *table, ya
 YARN_C99_DEF void  yarn_destroy_displayable_line(char *line);
 
 /* Function related stuff. */
-YARN_C99_DEF yarn_function_entry *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
+YARN_C99_DEF yarn_function_entry  yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
 YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *functions);
 
 /*
@@ -387,25 +424,30 @@ YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, y
  */
 YARN_C99_DEF yarn_func_reg yarn__standard_libs[];
 
-/* dynamic variable stuff. */
-typedef struct {
-    uint32_t   hash;
-    char      *name;
-    size_t     original_str_length;
-    yarn_value value;
-} yarn__var_entry;
-
-typedef YARN_DYN_ARRAY(yarn__var_entry) yarn__var_array; /* TODO: @data-structure should it be a hash map? */
-
 /* Hashes string. */
 YARN_C99_DEF uint32_t yarn__hashstr(char *str, size_t strlength);
 
 /* strndup implementation that uses YARN_MALLOC. */
 YARN_C99_DEF char *yarn__strndup(char *original, size_t length);
 
-
 /* tries to extend dynamic array. */
 YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps);
+
+/* hashmap API. */
+YARN_C99_DEF yarn_kvmap yarn__kvmap_create(size_t elem_size, size_t caps); /* returns newly created map with given capacity and element size. */
+YARN_C99_DEF void yarn__kvmap_destroy(yarn_kvmap *map);                    /* frees entire map. */
+
+/* pushes element into map. element_size must match with map->impl->element_size. */
+YARN_C99_DEF int yarn__kvmap_pushsize(yarn_kvmap *map, char *key, void *value, size_t element_size); 
+
+/* get element from map, and write into value if given valid pointer. returns -1 if does not exist. */
+YARN_C99_DEF int yarn__kvmap_get(yarn_kvmap *map, char *key, void *value, size_t element_size);
+
+/* delete element from map, and rearrange. */
+YARN_C99_DEF int yarn__kvmap_delete(yarn_kvmap *map, char *key);
+
+/* recreate the whole map if the current map's used up space meets certain threshold. */
+YARN_C99_DEF int yarn__kvmap_maybe_rehash(yarn_kvmap *map);
 
 /*
  * allocates line from current active string repo.
@@ -462,8 +504,8 @@ YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
 /*
  * functions for default (dynamic array based) storage.
  */
-YARN_C99_DEF yarn_value yarn__load_from_variable_array(void *istorage, char *var_name);
-YARN_C99_DEF void       yarn__save_into_variable_array(void *istorage, char *var_name, yarn_value value);
+YARN_C99_DEF yarn_value yarn__load_from_default_storage(void *istorage, char *var_name);
+YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *var_name, yarn_value value);
 #endif
 
 /*
@@ -512,21 +554,14 @@ YARN_C99_DEF void       yarn__save_into_variable_array(void *istorage, char *var
 #define YARN_DYNARR_POP(v, var) (((v)->used > 0) ? ((var) = ((v)->entries)[--((v)->used)], 1) : 0)
 
 
-yarn_function_entry *yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname) {
+yarn_function_entry yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname) {
     size_t length = strlen(funcname);
     uint32_t hash = yarn__hashstr(funcname, length);
 
-    for (int i = 0; i < dialogue->library.used; ++i) {
-        yarn_function_entry *f = &dialogue->library.entries[i];
-        if (f->name_length != length) continue;
-        if (f->name_hash   != hash)   continue;
+    yarn_function_entry entry = {0};
+    int exists = yarn_kvget(&dialogue->library, funcname, &entry);
 
-        if (strncmp(f->name, funcname, length) == 0) {
-            return f;
-        }
-    }
-
-    return 0;
+    return entry;
 }
 
  /* simple helper for zero initialized value */
@@ -834,8 +869,8 @@ yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
     dialogue->dialogue_complete_handler = &yarn__stub_dialogue_complete_handler;
     dialogue->prepare_for_lines_handler = &yarn__stub_prepare_for_lines_handler;
 
-    YARN_MAKE_DYNARRAY(&dialogue->library,         yarn_function_entry, 32);
-    YARN_MAKE_DYNARRAY(&dialogue->current_options,         yarn_option, 32);
+    dialogue->library = yarn_kvcreate(yarn_function_entry, 32);
+    YARN_MAKE_DYNARRAY(&dialogue->current_options, yarn_option, 32);
 
     yarn_load_functions(dialogue, yarn__standard_libs);
     return dialogue;
@@ -855,32 +890,30 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
         }
     }
 
+    yarn_kvdestroy(&dialogue->library);
     YARN_FREE(dialogue->current_options.entries);
-    YARN_FREE(dialogue->library.entries);
     YARN_FREE(dialogue);
 }
 
 yarn_variable_storage yarn_create_default_storage() {
-    yarn__var_array *array = YARN_MALLOC(sizeof(yarn__var_array));
-    YARN_MAKE_DYNARRAY(array, yarn__var_entry, 64);
+
+    yarn_kvmap kvmap = yarn_kvcreate(yarn_value, 64);
+    yarn_kvmap *m = YARN_MALLOC(sizeof(yarn_kvmap));
+
+    *m = kvmap;
 
     yarn_variable_storage storage = {0};
-    storage.data = array;
-    storage.load = &yarn__load_from_variable_array;
-    storage.save = &yarn__save_into_variable_array;
+    storage.data = m;
+    storage.load = &yarn__load_from_default_storage;
+    storage.save = &yarn__save_into_default_storage;
 
     return storage;
 }
 
 void yarn_destroy_default_storage(yarn_variable_storage storage) {
-    yarn__var_array *array = storage.data;
-
-    for (int i = 0; i < array->used; ++i) {
-        YARN_FREE(array->entries[i].name);
-    }
-
-    YARN_FREE(array->entries);
-    YARN_FREE(array);
+    yarn_kvmap *kvmap = storage.data;
+    yarn_kvdestroy(kvmap);
+    YARN_FREE(storage.data);
 }
 
 yarn_string_table *yarn_create_string_table() {
@@ -915,38 +948,15 @@ int yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *loading_function
             break;
         }
 
-        /*
-         * check if other function with the same name has been registered yet.
-         * fail if true.
-         */
-
-        int should_insert = 1;
-        size_t funcname_length = strlen(f.name);
-        uint32_t funcname_hash = yarn__hashstr((char*)f.name, funcname_length);
-
-        for (int x = 0; x < dialogue->library.used; ++x) {
-            yarn_function_entry *entry = &dialogue->library.entries[x];
-
-            if (entry->name_length != funcname_length) continue;
-            if (entry->name_hash   != funcname_hash)   continue;
-            if (strncmp(f.name, entry->name, funcname_length) != 0) continue;
-
+        if(yarn_kvhas(&dialogue->library, f.name)) {
             printf("Multiple declaration of same name.\n   conflicted name: %s\n", f.name);
             assert(0 && "Multiple declaration of same name");
         }
 
-        if (should_insert) {
-            yarn_function_entry ent = {0};
-
-            ent.name_hash   = funcname_hash;
-            ent.name_length = funcname_length;
-            ent.name        = f.name;
-            ent.function    = f.function;
-            ent.param_count = f.param_count;
-
-            YARN_DYNARR_APPEND(&dialogue->library, ent);
-            inserted++;
-        }
+        yarn_function_entry ent = {0};
+        ent.function    = f.function;
+        ent.param_count = f.param_count;
+        yarn_kvpush(&dialogue->library, f.name, ent);
     }
 
     return inserted;
@@ -1049,6 +1059,179 @@ void yarn__stub_prepare_for_lines_handler(yarn_dialogue *dialogue, char **ids, i
 }
 
 /* ===========================================
+ * Data structure.
+ */
+
+#define YARN__KV_INDEXOF(pmap, idx) (yarn_kvpair_header *)((pmap)->entries + ((sizeof(yarn_kvpair_header) + (pmap)->element_size) * idx))
+
+yarn_kvmap yarn__kvmap_create(size_t elem_size, size_t caps) {
+    yarn_kvmap map = {0};
+
+    size_t chunk_size  = sizeof(yarn_kvpair_header) + elem_size;
+    map.element_size = elem_size;
+    map.capacity     = caps;
+    map.entries      = YARN_MALLOC(chunk_size * caps);
+    map.used         = 0;
+    assert(map.entries);
+
+    for (int i = 0; i < map.capacity; ++i) {
+        yarn_kvpair_header *header = YARN__KV_INDEXOF(&map, i);
+
+        header->hash   = 0;
+        header->keylen = 0;
+        header->key    = 0;
+    }
+
+    return map;
+}
+
+#define YARN__KVMAP_THRESHOLD 0.7
+int yarn__kvmap_maybe_rehash(yarn_kvmap *map) {
+    if ((map->capacity * YARN__KVMAP_THRESHOLD) < map->used) {
+        yarn_kvmap new_map = yarn__kvmap_create(map->element_size, map->capacity * 2);
+
+        for (int i = 0; i < map->capacity; ++i) {
+            yarn_kvpair_header *header = YARN__KV_INDEXOF(map, i);
+            if (header->key) {
+                void *value = (void *)(header + 1);
+                yarn__kvmap_pushsize(&new_map, header->key, value, map->element_size);
+                YARN_FREE(header->key);
+                header->key = 0;
+            }
+        }
+
+        YARN_FREE(map->entries);
+        *map = new_map;
+        return 1;
+    }
+    return 0;
+}
+
+void yarn__kvmap_destroy(yarn_kvmap *map) {
+    for (int i = 0; i < map->capacity; ++i) {
+        yarn_kvpair_header *header = YARN__KV_INDEXOF(map, i);
+        if (header->key) {
+            YARN_FREE(header->key);
+            header->key = 0;
+        }
+    }
+
+    YARN_FREE(map->entries);
+}
+
+int yarn__kvmap_pushsize(yarn_kvmap *map, char *key, void *value, size_t element_size) {
+    assert(map && map->element_size == element_size);
+    assert(key && value);
+    yarn__kvmap_maybe_rehash(map);
+
+    size_t keylen   = strlen(key);
+    uint32_t hash   = yarn__hashstr(key, keylen);
+    uint32_t bucket = hash % map->capacity;
+    yarn_kvpair_header *header = YARN__KV_INDEXOF(map, bucket);
+
+    while(header->key) {
+        if (header->hash == hash && header->keylen == keylen) {
+            if (strncmp(header->key, key, keylen) == 0) {
+                void *insert_here = (void*)(header + 1);
+                memcpy(insert_here, value, element_size);
+
+                return (int)bucket;
+            }
+        }
+
+        bucket = (bucket + 1) % map->capacity;
+        header = YARN__KV_INDEXOF(map, bucket);
+    }
+
+    /* New insertion. */
+    header->hash   = hash;
+    header->keylen = keylen;
+    header->key    = yarn__strndup(key, keylen);
+
+    void *insert_here = (void*)(header + 1);
+    memcpy(insert_here, value, element_size);
+
+    map->used += 1;
+    return (int)bucket;
+}
+
+int yarn__kvmap_get(yarn_kvmap *map, char *key, void *value, size_t element_size) {
+    assert(map && key && map->entries);
+    if (value)
+        assert(element_size == map->element_size);
+    else
+        assert(element_size == 0);
+
+    size_t keylen   = strlen(key);
+    uint32_t hash   = yarn__hashstr(key, keylen);
+    uint32_t bucket = hash % map->capacity;
+    yarn_kvpair_header *header = YARN__KV_INDEXOF(map, bucket);
+
+    while(header->key) {
+        if (header->hash == hash && header->keylen == keylen) {
+            if (strncmp(header->key, key, keylen) == 0) {
+                if (value) {
+                    void *exists = (void*)(header+1);
+                    memcpy(value, exists, element_size);
+                }
+
+                return (int) bucket;
+            }
+        }
+
+        bucket = (bucket + 1) % map->capacity;
+        header = YARN__KV_INDEXOF(map, bucket);
+    }
+
+    return -1;
+}
+
+int yarn__kvmap_delete(yarn_kvmap *map, char *key) {
+    assert(map && key);
+    if (map->used == 0) return -1;
+
+    size_t keylen   = strlen(key);
+    uint32_t hash   = yarn__hashstr(key, keylen);
+    uint32_t bucket = hash % map->capacity;
+
+    yarn_kvpair_header *emptied = 0;
+    yarn_kvpair_header *header  = 0;
+    while(header->key) {
+        if (header->hash == hash && header->keylen == keylen) {
+            if (!emptied) { /* hasn't found yet. delete the entry itself. */
+                if (strncmp(header->key, key, keylen) == 0) {
+                    YARN_FREE(header->key);
+                    header->key    = 0;
+                    header->keylen = 0;
+                    header->hash   = 0;
+
+                    emptied = header;
+                }
+            } else {
+                /* move current header's content to emptied cell, then mark current header as emptied */
+                emptied->key    = header->key;
+                emptied->keylen = header->keylen;
+                emptied->hash   = header->hash;
+
+                header->keylen = 0;
+                header->hash   = 0;
+                header->key    = 0; /* don't free, emptied->key holds it */
+
+                emptied = header;
+                /* continue probing until actually empty cell is found */
+            }
+        }
+
+        bucket = (bucket + 1) % map->capacity;
+        header = YARN__KV_INDEXOF(map, bucket);
+    }
+
+    if (emptied) map->used -= 1;
+
+    return (!!emptied); /* return if there's a pointer assigned for once -- meaning if the deletion actually happened or not */
+}
+
+/* ===========================================
  * Utilities.
  */
 uint32_t yarn__hashstr(char *str, size_t length) {
@@ -1095,49 +1278,16 @@ char *yarn__strndup(char *cloning, size_t length) {
  * Dynamic Array based default storage functions.
  */
 
-yarn_value yarn__load_from_variable_array(void *istorage, char *var_name) {
-    yarn__var_array *storage = (yarn__var_array *)istorage;
+yarn_value yarn__load_from_default_storage(void *istorage, char *var_name) {
+    yarn_value value = yarn_none();
+    int exists = yarn_kvget((yarn_kvmap*)istorage, var_name, &value);
 
-    size_t length = strlen(var_name);
-    uint32_t hash = yarn__hashstr(var_name, length);
-    for (int i = 0; i < storage->used; ++i) {
-        yarn__var_entry e = storage->entries[i];
-
-        if (e.hash == hash && e.original_str_length == length) {
-            if (strncmp(var_name, e.name, length) == 0) {
-                return e.value;
-            }
-        }
-    }
-
-    return yarn_none();
+    return value;
 }
 
-void yarn__save_into_variable_array(void *istorage, char *var_name, yarn_value value) {
-    yarn__var_array *storage = (yarn__var_array *)istorage;
-
-    size_t length = strlen(var_name);
-    uint32_t hash = yarn__hashstr(var_name, length);
-
-    for (int i = 0; i < storage->used; ++i) {
-        yarn__var_entry *e = &storage->entries[i];
-
-        if (e->hash == hash && e->original_str_length == length) {
-            if(strncmp(var_name, e->name, length) == 0) {
-                e->value = value;
-                return;
-            }
-        }
-    }
-
-    /* variable does not exist: create new entry instead. */
-    yarn__var_entry entry = {0};
-    entry.hash = hash;
-    entry.name = yarn__strndup(var_name, length);
-    entry.original_str_length = length;
-    entry.value = value;
-
-    YARN_DYNARR_APPEND(storage, entry);
+void yarn__save_into_default_storage(void *istorage, char *var_name, yarn_value value) {
+    yarn_kvmap map = { istorage };
+    yarn_kvpush((yarn_kvmap*)istorage, var_name, value);
 }
 
 /* ===========================================
@@ -1673,14 +1823,14 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
             int actual_params = yarn_value_as_int(yarn_pop_value(dialogue));
             char *func_name = key_operand->string_value;
-            yarn_function_entry *func = yarn_get_function_with_name(dialogue, func_name);
-            if (!func) {
+            yarn_function_entry func = yarn_get_function_with_name(dialogue, func_name);
+            if (!func.function) {
                 printf("Function named `%s`(param count %d) does not exist.\n", func_name, actual_params);
                 assert(0);
             }
-            assert(func->function);
+            assert(func.function);
 
-            int expect_params = func->param_count;
+            int expect_params = func.param_count;
             if (expect_params != actual_params) {
                 printf("[YARN SPINNER]: Runtime error -- function named %s expects %d arguments, but %d provided.\n",
                         func_name, expect_params, actual_params);
@@ -1700,7 +1850,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
             /* TODO: @allocator what if user allocates string here and return it?
              * who holds ownership to that pointer ? */
-            yarn_value value = func->function(dialogue);
+            yarn_value value = func.function(dialogue);
             assert(expect_stack_position == dialogue->stack_ptr);
 
             if (value.type != YARN_VALUE_NONE) {

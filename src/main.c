@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #endif
-
 #include "yarn_c99.h"
 
 /*

@@ -3,6 +3,7 @@
 #include "protobuf-c.c"
 #include "yarn_spinner.pb-c.h"
 #include "yarn_spinner.pb-c.c"
+
 #define YARN_C99_IMPLEMENTATION
 #include "yarn_c99.h"
 
@@ -46,21 +47,23 @@ void draw_text_utf8(const char *string, Vector2 pos, Color c) {
 }
 
 void handle_line(yarn_dialogue *dialog, yarn_line *line) {
-    mode = MD_LINE;
     accumulator = 0;
  
-    char *text = yarn_load_line(dialog, line);
+    char *text = yarn_convert_to_displayable_line(dialog->strings, line);
+    assert(text);
     sentence = text;
     sentence_count = 0;
     sentence_length = strlen(text)+1;
+
+    mode = MD_LINE;
 }
 
 void handle_options(yarn_dialogue *dialogue, yarn_option *opt, int n_opt) {
-    mode = MD_OPTION;
     accumulator = 0;
-
     options   = opt;
     n_options = n_opt;
+
+    mode = MD_OPTION;
 }
 
 void render_initial_prompt(yarn_dialogue *d) {
@@ -83,6 +86,7 @@ void render_initial_prompt(yarn_dialogue *d) {
 }
 
 void render_sentence(yarn_dialogue *d, int x, int y) {
+    assert(sentence);
     int reached_to_an_end = (sentence_count == sentence_length);
 
     /* ===============
@@ -92,6 +96,7 @@ void render_sentence(yarn_dialogue *d, int x, int y) {
         if (sentence_count == sentence_length) {
             mode = MD_NONE;
             yarn_continue(d);
+            /* yarn_destroy_displayable_line(sentence); */ /* @leak: i just never free. */
             return;
         } else {
             sentence_count = sentence_length - 2;
@@ -118,13 +123,13 @@ void render_sentence(yarn_dialogue *d, int x, int y) {
     }
 
     char *f = sentence;
-    if (!reached_to_an_end) f = strndup(sentence, sentence_count);
+    if (!reached_to_an_end) f = yarn__strndup(sentence, sentence_count);
     Vector2 position = {
         x,
         y,
     };
     draw_text_utf8(f, position, BLUE);
-    if (!reached_to_an_end) free(f);
+    if (!reached_to_an_end) YARN_FREE(f);
 }
 
 void render_options(yarn_dialogue *d, int x, int y) {
@@ -153,7 +158,7 @@ void render_options(yarn_dialogue *d, int x, int y) {
      * =============== */
     for (int i = 0; i < n_options; ++i) {
         yarn_option *o = &options[i];
-        char *line = yarn_load_line(d, &o->line);
+        char *line = yarn_convert_to_displayable_line(d->strings, &o->line);
         const char *prompt;
         Color color;
 
@@ -164,13 +169,16 @@ void render_options(yarn_dialogue *d, int x, int y) {
             color = BLACK;
             prompt = TextFormat("%d: %s", o->id, line);
         }
+        yarn_destroy_displayable_line((char*)line);
 
         draw_text_utf8(prompt, pos, color);
+
         pos.y += TEXT_SIZE + 5;
     }
 }
 
 void render_debug_info(yarn_dialogue *dialogue) {
+#if 0
     Color   color = Fade(BLACK, 0.5);
     Vector2 dialogue_pos = { GetScreenWidth() - MeasureTextEx(fontnormal, "variable:", TEXT_SIZE, 0).x - 10, 0 };
 
@@ -192,6 +200,7 @@ void render_debug_info(yarn_dialogue *dialogue) {
         DrawTextEx(fontnormal, text, dialogue_pos, TEXT_SIZE, 0, color);
         dialogue_pos.y += TEXT_SIZE;
     }
+#endif
 }
 
 int *pack_codepoints(char *file, int *size) {
@@ -200,7 +209,8 @@ int *pack_codepoints(char *file, int *size) {
 
     int cap = 1024;
     int sz = 255;
-    int *result = calloc(1024, sizeof(int));
+    int *result = malloc(1024 * sizeof(int));
+    memset(result, 0, 1024 * sizeof(int));
 
     for (int i = 1; i < 255; ++i) {
         result[i] = i; /* forcing Ascii character to be a part of it */
@@ -215,7 +225,7 @@ int *pack_codepoints(char *file, int *size) {
         }
 
         if (sz == cap) {
-            int *n = calloc(cap * 2, sizeof(int));
+            int *n = realloc(result, cap * 2 * sizeof(int));
             assert(n);
             if (n) {
                 memcpy(n, result, sz * sizeof(int));
@@ -237,14 +247,15 @@ int *pack_codepoints(char *file, int *size) {
 
 int main(int argc, char **argv) {
     InitWindow(800, 600, "Yarn Example");
-    yarn_dialogue *d = yarn_create_dialogue_heap(0);
-
+    yarn_variable_storage storage = yarn_create_default_storage();
+    yarn_string_table   *strtable = yarn_create_string_table();
+    yarn_dialogue *d = yarn_create_dialogue(storage);
 
     /* Read files */
     unsigned int yarnc_read = 0;
     unsigned int csv_read = 0;
     char *yarnc_file =(char*) LoadFileData("resources/Output.yarnc", &yarnc_read);
-    char *csv_file   = LoadFileText("resources/Output-ja.csv");
+    char *csv_file   = LoadFileText("resources/Output-en.csv");
     csv_read = strlen(csv_file);
 
     int size = 0;
@@ -253,15 +264,17 @@ int main(int argc, char **argv) {
     fontcp     = LoadFontEx("resources/Font.ttf", TEXT_SIZE, packed, size);
     fontnormal = LoadFontEx("resources/Font.ttf", TEXT_SIZE, 0, 0);
     free(packed);
-
     assert(yarnc_file && csv_file);
-    yarn_load_program(d, yarnc_file, (size_t)yarnc_read, csv_file, (size_t)csv_read);
+
+    yarn_load_program(d, yarnc_file, yarnc_read);
+    yarn_load_string_table(strtable, csv_file, csv_read);
 
     UnloadFileData((unsigned char *)yarnc_file);
     UnloadFileText(csv_file);
 
-    d->delegates.line_handler   = handle_line;
-    d->delegates.option_handler = handle_options;
+    d->strings        = strtable;
+    d->line_handler   = handle_line;
+    d->option_handler = handle_options;
 
     float char_per_second = 24;
     float char_interval_in_ms = 1000 / char_per_second;
@@ -288,9 +301,10 @@ int main(int argc, char **argv) {
                 if (accumulator < 0) accumulator = 0;
 
                 int bytes = 1;
-                GetCodepoint(&sentence[sentence_count], &bytes);
-
-                sentence_count += bytes;
+                if (sentence) {
+                    GetCodepoint(&sentence[sentence_count], &bytes);
+                    sentence_count += bytes;
+                }
             }
 
             if (sentence_length != 0 && (sentence_count > sentence_length)) {
@@ -313,8 +327,12 @@ int main(int argc, char **argv) {
     }
 
     yarn_destroy_dialogue(d);
+    yarn_destroy_default_storage(storage);
+    yarn_destroy_string_table(strtable);
     UnloadFont(fontcp);
     UnloadFont(fontnormal);
     CloseWindow();
+
+    stb_leakcheck_dumpmem();
     return 0;
 }
