@@ -33,10 +33,6 @@
       to create implementation for this library.
       failing to do so will cause a link error (undefined reference yarn_...).
 
-      if you're willing to go with static function (no dynamic stuff),
-      defined this:
-        #define YARN_C99_STATIC
-
 info:
     stubs:
         yarn's line handler / option handler stuff, by default, uses stub operation.
@@ -55,9 +51,11 @@ info:
  * TODO:
  *
  * - cleanup, tidy-up
+ * - handle uncertain lifetime problem about "substitutions" stuff.
+ *
  * - more consistent memory handling (malloc festival with varying lifetime invites serious disaster)
  *   - (@intern)         some wasteful string allocation should be interned instead.
- *   - (@allocator)      unstable / inconsistent lifetime, cause of fragmentation, not using YARN_MALLOC, etc
+ *   - (@allocator)      unstable / inconsistent lifetime, cause of fragmentation, not using YARN_MALLOC, etc that can be solved with allocator.
  *   - (@data-structure) performing slow lookups that can be solved with appropriate data structure.
  *
  * - assert crusade (some error should be reported to game, instead of crashing outright)
@@ -103,7 +101,7 @@ typedef struct yarn_variable_storage yarn_variable_storage;
  *     yarn_destroy_dialogue(dialogue);
  *     yarn_destroy_default_storage(storage);
  *
- *   default storage is the same as InMemoryVariableStorage in C# implementation,
+ *   default storage plays the same role as InMemoryVariableStorage in C# implementation.
  *   it uses hashmap underneath.
  *
  * alternatively, you can create your own storage:
@@ -151,12 +149,6 @@ struct yarn_value {
     } values;
 };
 
-#define YARN_DYN_ARRAY(ty) struct { \
-    size_t used; \
-    size_t capacity; \
-    ty *entries; \
-}
-
 /* =========================================
  * Hashmap.
  * Unlike dynamic array above, this one is also usable in user space.
@@ -167,8 +159,8 @@ struct yarn_value {
  *   it is actually storing the SIZE of the type. more on that below.
  * 
  * overview of how it's implemented:
- *   linear-probing with djb2 hashing.
- *   only supports char* as key, and will be copied on push.
+ *   linear-probing, djb2 hashing.
+ *   only supports char* as key, and key will be cloned on push.
  * 
  *   internal data is stored in char* buffer.
  *   like the diagram shown below;
@@ -186,9 +178,14 @@ struct yarn_value {
  * create hashmap with:
  *  map = yarn_kvcreate(element, capacity);
  *
+ *  then, operate with:
+ *    yarn_kvpush(&map, "hello", value);
+ *    yarn_kvget(&map, "hello", &value); // will write into value
+ *    yarn_kvhas(&map, "hello"); // returns 1 on true, 0 on false
+ *    yarn_kvdelete(&map, "hello");
  *
- *  then, push with:
- *  yarn_kvpush(&map, "hello", value);
+ *  once you're done:
+ *    yarn_kvdestroy(&map); // every value stored inside will be unreachable.
  */
 
 typedef struct {
@@ -223,8 +220,23 @@ typedef struct {
     yarn__kvmap_delete((map), (key))
 
 /* =============================================
+ * quick and dirty type-safe dynamic array
+ */
+
+#define YARN_DYN_ARRAY(ty) struct { \
+    size_t used; \
+    size_t capacity; \
+    ty *entries; \
+}
+
+/* macro for push/pop/create/destroy is inside implementation block below. */
+
+/* =============================================
  * Yarn line:
  * Same as C# implementation.
+ * 
+ * TODO: @allocator the lifetime of substitions array cannot be trusted right now.
+ * do not copy the pointer, clone the entire array if you want the lifetime to be certain.
  */
 
 typedef struct {
@@ -250,7 +262,7 @@ typedef YARN_DYN_ARRAY(yarn_parsed_entry) yarn_string_table;
 
 /* =============================================
  * Yarn options:
- * Same as C# implementation.
+ * TODO: @allocator same warning as line applies here.
  */
 
 typedef struct {
@@ -399,7 +411,7 @@ YARN_C99_DEF yarn_value yarn_none(void);
 YARN_C99_DEF yarn_value yarn_float(float real);
 YARN_C99_DEF yarn_value yarn_int(int integer);
 YARN_C99_DEF yarn_value yarn_bool(int boolean);
-YARN_C99_DEF yarn_value yarn_string(char *string); /* TODO: @allocator this does not copy string!! */
+YARN_C99_DEF yarn_value yarn_string(char *string); /* TODO: @allocator I should clone passed string here. */
 
 /* unravels value. */
 YARN_C99_DEF char *yarn_value_as_string(yarn_value value);
@@ -433,7 +445,7 @@ YARN_C99_DEF yarn_value yarn_load_variable(yarn_dialogue *dialogue, char *var_na
 YARN_C99_DEF void       yarn_store_variable(yarn_dialogue *dialogue, char *var_name, yarn_value value);
 
 /* loads line, and performs substitution.
- * NOTE:
+ * NOTE: @allocator
  *    1. convert function consumes line. it is unsafe to access inner data after you've called this function.
  *    2. returned value must be freed with yarn_destroy_displayable_line.
  * */
@@ -452,7 +464,7 @@ YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, y
 
 /* Standard libraries.
  * based on c#'s standard libraries. definitions will be inside the IMPLEMENTATION block. 
- * TODO: string is not supported, yet. */
+ * TODO: string is not supported yet. */
 extern yarn_func_reg yarn__standard_libs[];
 
 /* Hashes string. */
@@ -517,6 +529,7 @@ YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
 /* functions for default (dynamic array based) storage. */
 YARN_C99_DEF yarn_value yarn__load_from_default_storage(void *istorage, char *var_name);
 YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *var_name, yarn_value value);
+
 #endif
 
 /*
@@ -525,8 +538,8 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
  * ==================================================================
  * */
 
-#if defined(YARN_C99_IMPLEMENTATION) && !defined(YARN_C99_INPLEMENT_COMPLETE)
-#define YARN_C99_INPLEMENT_COMPLETE
+#if defined(YARN_C99_IMPLEMENTATION) && !defined(YARN_C99_IMPLEMENT_COMPLETE)
+#define YARN_C99_IMPLEMENT_COMPLETE
 
 #include <assert.h>
 #include <string.h> /* for strncmp, memset */
@@ -561,11 +574,12 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
     (target)->entries   = YARN_MALLOC(cap * sizeof(elemtype)); \
 } while(0)
 
-#define YARN_DYNARR_APPEND(v, ent) do {                                           \
-  YARN_STATIC_ASSERT(sizeof((v)->entries[0]) == sizeof(ent), type_size_mismatch);              \
-  yarn__maybe_extend_dyn_array((void**)&((v)->entries), sizeof(ent),         \
-                               ((v)->used), &((v)->capacity)); \
-  ((v)->entries)[((v)->used)++] = (ent);                                       \
+/* TODO: @cleanup why is it so different from hashmap???? */
+#define YARN_DYNARR_APPEND(v, ent) do {                                             \
+  YARN_STATIC_ASSERT(sizeof((v)->entries[0]) == sizeof(ent), type_size_mismatch);   \
+  yarn__maybe_extend_dyn_array((void**)&((v)->entries), sizeof(ent),                \
+                               ((v)->used), &((v)->capacity));                      \
+  ((v)->entries)[((v)->used)++] = (ent);                                            \
 } while (0)
 
 /* Pops element, and assign it into "var". returns 0 if length == 0. */
@@ -765,11 +779,15 @@ char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line
             result = yarn__strndup(result, strlen(result));
         }
     } else {
+        /* TODO: @logging */
         printf("line id %s does not exist.\n", line->id);
         printf("NOTE: the line will still be consumed\n");
     }
 
     /* no matter how actual providing goes, still consume the base line. */
+    /* TODO: FIXME: @allocator
+     * this is confusing and certainly will be unexpected for users.
+     * remove it and find some other way to keep memory from leaking. */
     if (line->n_substitutions > 0) {
         for (int i = 0; i < line->n_substitutions; ++i) {
             yarn_destroy_formatted_string(line->substitutions[i]);
@@ -1948,6 +1966,7 @@ typedef struct {
     size_t size;
 } yarn__expect_csv_column;
 
+/* TODO: @limit this shouldn't be concretely defined like this. it's not guaranteed that the csv's column would look exactly like this */
 const yarn__expect_csv_column expect_column[] = {
     { "id",         sizeof("id")         - 1 },
     { "text",       sizeof("text")       - 1 },
@@ -1956,6 +1975,7 @@ const yarn__expect_csv_column expect_column[] = {
     { "lineNumber", sizeof("lineNumber") - 1 },
 };
 
+/* quick and dirty CSV parsing. */
 int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer, size_t string_table_length) {
     char *begin = string_table_buffer;
     size_t current     = 0;
@@ -1981,7 +2001,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
 
             case '"':
             {
-                /* 1. csv escapes double quotation with itself apparently. wtf? */
+                /* 1. csv escapes double quotation with itself apparently. what the crap? */
                 if (in_quote && begin[advanced+1] == '"') {
                     advanced += 2;
                 } else {

@@ -87,6 +87,9 @@ int main(int argc, char **argv) {
 
 void yarn_handle_line(yarn_dialogue *dialogue, yarn_line *line) {
     /* create displayable line (performs substitution of {0}, {1}...) */
+    /* NOTE:
+     * this will consume the content of yarn_line for now.
+     */
     char *message  = yarn_convert_to_displayable_line(dialogue->strings, line);
 
     if (message) {
@@ -97,6 +100,12 @@ void yarn_handle_line(yarn_dialogue *dialogue, yarn_line *line) {
 
     /* when done, clear message and continue. */
     yarn_destroy_displayable_line(message);
+
+    /*
+     * NOTE:
+     * the moment you leave the scope of this function, the content of
+     * yarn_line will be released and unable to access.
+     */
     yarn_continue(dialogue);
 }
 
@@ -105,6 +114,9 @@ void yarn_handle_option(yarn_dialogue *dialogue, yarn_option *options, int optio
     for (int o = 0; o < option_count; ++o) {
         yarn_option *opt = &options[o];
         /* create displayable line (performs substitution of {0}, {1}...) */
+        /* NOTE:
+         * this will consume the content of yarn_line for now.
+         */
         char *message_for_id = yarn_convert_to_displayable_line(dialogue->strings, &opt->line);
 
         printf("%d: %s\n", options[o].id, message_for_id);
