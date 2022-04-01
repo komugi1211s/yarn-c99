@@ -184,6 +184,14 @@ struct yarn_value {
  *    yarn_kvhas(&map, "hello"); // returns 1 on true, 0 on false
  *    yarn_kvdelete(&map, "hello");
  *
+ *    char *key;
+ *    value value;
+ *    yarn_kvforeach(&map, &key, &value) {
+ *      // do whatever with value.
+ *      // do not modify map while you're in foreach loop. do not free key.
+ *      // foreach is unordered.
+ *    }
+ *
  *  once you're done:
  *    yarn_kvdestroy(&map); // every value stored inside will be unreachable.
  */
@@ -219,6 +227,16 @@ typedef struct {
 #define yarn_kvdelete(map, key) \
     yarn__kvmap_delete((map), (key))
 
+#define yarn_kviternext(map, key_ptr, value_ptr, at)\
+    yarn__kvmap_iternext((map),(key_ptr),(value_ptr),((value_ptr)?sizeof(*value_ptr):0), at)
+
+/* TODO: super confusing and complex. fix it */
+#define yarn_kvforeach(map, key_ptr, value_ptr) \
+    for(int kv_iter = yarn_kviternext((map), (key_ptr), (value_ptr), 0); \
+        kv_iter != -1; \
+        kv_iter = yarn_kviternext((map), (key_ptr), (value_ptr), 0))\
+        if (kv_iter == -1) { break; } else
+
 /* =============================================
  * quick and dirty type-safe dynamic array
  */
@@ -250,14 +268,17 @@ typedef struct {
  * TODO: @allocator recipe for fragmentation disaster. fix it
  * */
 typedef struct {
-    char *id;
     char *text;
     char *file;         /* TODO: @intern can be interned. */
     char *node;         /* TODO: @intern can be interned. */
     int   line_number;
 } yarn_parsed_entry;
 
-typedef YARN_DYN_ARRAY(yarn_parsed_entry) yarn_string_table;
+typedef struct {
+    /* TODO: @intern string interner for files, and nodes. */
+    /* TODO: locale identifier could be nice parhaps? */
+    yarn_kvmap table;
+} yarn_string_table;
 
 
 /* =============================================
@@ -487,11 +508,9 @@ YARN_C99_DEF int yarn__kvmap_delete(yarn_kvmap *map, char *key);
 /* recreate the whole map if the current map's used up space meets certain threshold. */
 YARN_C99_DEF int yarn__kvmap_maybe_rehash(yarn_kvmap *map);
 
-/*
- * allocates line from current active string repo.
- * essentially pushing line into an array and returning empty string line.
- */
-YARN_C99_DEF yarn_parsed_entry *yarn__alloc_line(yarn_string_table *string_table);
+/* checks hashmap entry specified by at, and writes key/value into pointers.
+ * returns at + 1 if it can be continued, -1 otherwise. */
+YARN_C99_DEF int yarn__kvmap_iternext(yarn_kvmap *map, char **key, void *value, size_t element_size, int at);
 
 /* allocates new string with substituted value for {0}, {1}, {2}... format. */
 YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_substs);
@@ -776,16 +795,9 @@ char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line
     size_t given_id_length = strlen(line->id);
     char *result = 0;
 
-    for (int i = 0; i < table->used; ++i) {
-        yarn_parsed_entry *entry = &table->entries[i];
-        /* maybe ID points to same memory location? */
-        if (entry->id == line->id) return entry->text;
-
-        if (strlen(entry->id) != given_id_length) continue;
-        if (strncmp(entry->id, line->id, given_id_length) == 0) {
-            result = entry->text;
-            break;
-        }
+    yarn_parsed_entry entry = {0};
+    if (yarn_kvget(&table->table, line->id, &entry) != -1) {
+        result = entry.text;
     }
 
     if (result) {
@@ -975,22 +987,22 @@ void yarn_destroy_default_storage(yarn_variable_storage storage) {
 
 yarn_string_table *yarn_create_string_table() {
     yarn_string_table *table = YARN_MALLOC(sizeof(yarn_string_table));
-    YARN_MAKE_DYNARRAY(table, yarn_parsed_entry, 512);
+
+    table->table = yarn_kvcreate(yarn_parsed_entry, 512);
     return table;
 }
 
 void yarn_destroy_string_table(yarn_string_table *table) {
-    if (table->used > 0) {
-        /* TODO: @allocator fragmentation disaster. */
-        for(size_t i = 0; i < table->used; ++i) {
-            YARN_FREE(table->entries[i].id);
-            YARN_FREE(table->entries[i].text);
-            YARN_FREE(table->entries[i].file);
-            YARN_FREE(table->entries[i].node);
-        }
+    char *key = 0;
+    yarn_parsed_entry value = {0};
+
+    yarn_kvforeach(&table->table, &key, &value) {
+        YARN_FREE(value.text);
+        YARN_FREE(value.file);
+        YARN_FREE(value.node);
     }
 
-    YARN_FREE(table->entries);
+    yarn_kvdestroy(&table->table);
     YARN_FREE(table);
 }
 
@@ -1175,6 +1187,29 @@ int yarn__kvmap_maybe_rehash(yarn_kvmap *map) {
         return 1;
     }
     return 0;
+}
+
+int yarn__kvmap_iternext(yarn_kvmap *map, char **key, void *value, size_t element_size, int at) {
+    if (value && element_size == 0) return -1;
+    if (element_size != map->element_size && element_size != 0)  return -1;
+    if (at < 0 || map->capacity < at)  return -1;
+
+    yarn_kvpair_header *header = YARN__KV_INDEXOF(map, at);
+    while(at < map->capacity) {
+        if (header->key) break;
+
+        at += 1;
+        header = YARN__KV_INDEXOF(map, at);
+    }
+
+    if (at < map->capacity) {
+        assert(header);
+        if (key)  *key = header->key;
+        if (value) memcpy(value, (void*)(header+1), element_size);
+        return at + 1;
+    }
+
+    return -1;
 }
 
 void yarn__kvmap_destroy(yarn_kvmap *map) {
@@ -2038,12 +2073,6 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs) {
 /* ===========================================
  * Parsing strings / CSV tables.
  */
-yarn_parsed_entry *yarn__alloc_line(yarn_string_table *strings) {
-    assert(strings->entries != 0);
-
-    yarn__maybe_extend_dyn_array((void **)&strings->entries, sizeof(strings->entries[0]), strings->used, &strings->capacity);
-    return &strings->entries[strings->used++];
-}
 
 typedef struct {
     char *word;
@@ -2067,22 +2096,21 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
     int column_count   = 0;
     int current_column = 0;
 
+    int current_line       = 1;
     int parsing_first_line = 1;
     int in_quote = 0;
 
-    yarn_parsed_entry *line = yarn__alloc_line(table);
+    char *line_id = 0;
+    yarn_parsed_entry line = {0};
 
-    while(current < string_table_length) {
+    while(current < string_table_length && advanced < string_table_length) {
         assert(current_column <= column_count);
+        if (begin[advanced] == '\0') {
+            current = advanced;
+            break;
+        }
 
         switch(begin[advanced]) {
-            /* We're done!! */
-            case '\0':
-            {
-                current = advanced;
-                goto done;
-            } break;
-
             case '"':
             {
                 /* 1. csv escapes double quotation with itself apparently. what the crap? */
@@ -2098,115 +2126,131 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
             {
                 if (in_quote) {
                     advanced++;
-                } else {
-                    assert(current_column == column_count);
-                    if (!parsing_first_line) {
-                        line = yarn__alloc_line(table);
-                    } else {
-                        parsing_first_line = 0;
-                    }
-
-                    current_column = 0;
-                    advanced++; /* skip line break */
-                    current = advanced;
+                    break;
                 }
+
+                if (current_column != column_count) {
+                    printf("error (line %d): unexpected linebreak before row parsing is complete.\n", current_line);
+                    goto errored;
+                }
+
+                if (!parsing_first_line) {
+                    yarn_kvpush(&table->table, line_id, line);
+                    YARN_FREE(line_id);
+
+                    line_id   = 0;
+                    line.text = 0;
+                    line.file = 0;
+                    line.node = 0;
+                    line.line_number = 0;
+                } else {
+                    parsing_first_line = 0;
+                }
+
+                current_line += 1;
+                current_column = 0;
+                advanced++; /* skip line break */
+                current = advanced;
             } break;
 
             case ',':
             {
                 if (in_quote) {
                     advanced++;
-                } else {
-                    if (parsing_first_line) {
-                        assert(column_count < YARN_LEN(expect_column));
-                        const yarn__expect_csv_column *expect = &expect_column[column_count];
+                    break;
+                }
 
-                        /* TODO: @logging handle more gracefully. */
-                        size_t consumed_since = advanced - current;
-                        if (expect->size != consumed_since) {
-                            printf("Expect size difference: %zu to %zu\n", expect->size, consumed_since);
-                            return 0;
-                        }
+                if (parsing_first_line) {
+                    assert(column_count < YARN_LEN(expect_column));
+                    const yarn__expect_csv_column *expect = &expect_column[column_count];
 
-                        char *current_ptr = &begin[current];
-                        if (strncmp(current_ptr, expect->word, expect->size) != 0) {
-                            char *dupped_str = yarn__strndup(current_ptr, consumed_since);
-
-                            printf("Expect word difference: %s to %s\n", expect->word, dupped_str);
-                            YARN_FREE(dupped_str);
-                            return 0;
-                        }
-
-                        column_count++;
-                    } else {
-
-                        /* TODO: @deviation
-                         * this part of the code must parse line number as an
-                         * integer.
-                         * */
-                        assert(current < advanced);
-                        assert(advanced <= string_table_length);
-
-                        size_t consumed_since = 0;
-
-                        if (begin[advanced - 1] == '"') {
-                            /* been in quote!! */
-                            consumed_since = (advanced - 1) - (current + 1);
-                            current += 1;
-                        } else {
-                            consumed_since = advanced - current;
-                        }
-
-                        char *current_ptr = &begin[current];
-                        if (current_column == 4) {
-                            /* TODO: @limit let's limit line size to 65535 for now. */
-                            assert(consumed_since <= 5 && "line number size more than 65535 (todo)");
-
-                            int result_number = 0;
-                            for (int i = 0; i < consumed_since; ++i) {
-                                /* TODO: @limit handle other than ascii */
-                                char c = begin[current+i];
-                                int  n = c - '0';
-                                assert((n >= 0 && n <= 9) && "number evaluated to something different");
-                                /* if I'm going to handle maximum numbers, do this to check overflow;
-                                 * int a = INT_MAX - n;
-                                 * int b = a / 10;
-                                 * assert(result_number <= b);
-                                 * */
-
-                                result_number = result_number * 10 + n;
-                            }
-
-                            line->line_number = result_number;
-                        } else {
-                            char *dupped_str = yarn__strndup(current_ptr, consumed_since);
-
-                            /* super complicated for just removing double quotation though. */
-                            char *has_dquote_escaped = 0;
-                            while((has_dquote_escaped = strstr(dupped_str, "\"\""))) {
-                                size_t following_text = (size_t)(has_dquote_escaped - dupped_str);
-                                memmove(has_dquote_escaped + 1, has_dquote_escaped + 2, following_text);
-                                dupped_str[consumed_since--] = '\0';
-                            }
-
-                            if (current_column == 0) {        /* id */
-                                line->id = dupped_str;
-                            } else if (current_column == 1) { /* text */
-                                line->text = dupped_str;
-                            } else if (current_column == 2) { /* file */
-                                line->file = dupped_str;
-                            } else if (current_column == 3) {
-                                line->node = dupped_str;
-                            } else {
-                                assert(0 && "Unknown column detected.");
-                            }
-                        }
+                    /* TODO: @logging handle more gracefully. */
+                    size_t consumed_since = advanced - current;
+                    if (expect->size != consumed_since) {
+                        printf("error(line %d): expect size difference: %zu to %zu\n", current_line, expect->size, consumed_since);
+                        goto errored;
                     }
 
-                    current_column++;
-                    advanced++; /* skip comma */
-                    current = advanced;
+                    char *current_ptr = &begin[current];
+                    if (strncmp(current_ptr, expect->word, expect->size) != 0) {
+                        char *dupped_str = yarn__strndup(current_ptr, consumed_since);
+
+                        printf("error(line %d): expect word difference: %s to %s\n", current_line, expect->word, dupped_str);
+                        YARN_FREE(dupped_str);
+                        goto errored;
+                    }
+
+                    column_count++;
+                } else {
+                    /* TODO: @deviation
+                     * this part of the code must parse line number as an
+                     * integer.
+                     * */
+                    size_t consumed_since = 0;
+                    assert(current < advanced);
+                    if (begin[advanced - 1] == '"') {
+                        /* been in quote!! skip quote altogether. */
+                        consumed_since = (advanced - 1) - (current + 1);
+                        current += 1;
+                    } else {
+                        consumed_since = advanced - current;
+                    }
+
+                    char *current_ptr = &begin[current];
+                    if (current_column == 4) {
+                        int result_number = 0;
+                        for (int i = 0; i < consumed_since; ++i) {
+                            /* TODO: @limit handle other than ascii */
+                            char c = begin[current+i];
+                            int  n = c - '0';
+                            if (n < 0 || n > 9) {
+                                printf("error(csv line %d): encountered char `%c` while parsing line number.\n", current_line, n);
+                                goto errored;
+                            }
+
+                            if ((INT_MAX - n) / 10 >= result_number) {
+                                printf("error(csv line %d): integer overflow\n", current_line);
+                                goto errored;
+                            }
+
+                            result_number = result_number * 10 + n;
+                        }
+                        line.line_number = result_number;
+                    } else {
+                        char *dupped_str = yarn__strndup(current_ptr, consumed_since);
+                        size_t strlength = consumed_since;
+                        char *escaped_quote_at = strstr(dupped_str, "\"\""); /* search escaped quote. */
+
+                        while (escaped_quote_at) { /* escaped_quote_at points to the beginning of double quote escape. */
+                            /* how many char is remaining past escaped quote position? */
+                            size_t remaining = strlength - (escaped_quote_at - dupped_str) - 1;
+
+                            memmove(escaped_quote_at,     /* first position of escaped quote */
+                                    escaped_quote_at + 1, /* second after the escaped quote    */
+                                    remaining);       /* since we're skipping 1 doublequote, subtract 1 from move amount */
+
+                            dupped_str[--strlength] = '\0'; /* shift consumed_since */
+                            escaped_quote_at = strstr(escaped_quote_at, "\"\""); /* continue */
+                        }
+
+                        if (current_column == 0) {        /* id */
+                            line_id = dupped_str;
+                        } else if (current_column == 1) { /* text */
+                            line.text = dupped_str;
+                        } else if (current_column == 2) { /* file */
+                            line.file = dupped_str;
+                        } else if (current_column == 3) {
+                            line.node = dupped_str;
+                        } else {
+                            printf("error(csv line %d): unexpected column\n", current_line);
+                            goto errored;
+                        }
+                    }
                 }
+
+                current_column++;
+                advanced++; /* skip comma */
+                current = advanced;
             } break;
 
             default: advanced++;
@@ -2214,10 +2258,22 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
     }
 
 done:
-
-    assert(current == string_table_length);
-    assert(in_quote == 0 && "Unexpected eof while parsing double quotation");
+    if (current != string_table_length) {
+        printf("error: couldn't parse until the end of the string table. data possibly corrupted\n");
+        goto errored;
+    }
+    if (in_quote) {
+        printf("error: unexpected eof while parsing double quotation\n");
+        goto errored;
+    }
     return 1;
+
+errored:
+    if (line_id) YARN_FREE(line_id);
+    if (line.text) YARN_FREE(line.text);
+    if (line.file) YARN_FREE(line.file);
+    if (line.node) YARN_FREE(line.node);
+    return 0;
 }
 
 
