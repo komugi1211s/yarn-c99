@@ -60,6 +60,9 @@ int main(int argc, char **argv) {
 
     /* assign ops respectively. */
     dialogue->strings        = string_table;
+
+    /* dialogue->log_debug = imaginary_debug_function; -- Optional */
+    /* dialogue->log_error = imaginary_error_function; -- Optional */
     dialogue->line_handler   = yarn_handle_line;
     dialogue->option_handler = yarn_handle_option;
     dialogue->command_handler = yarn_handle_command;
@@ -156,7 +159,6 @@ void yarn_handle_command(yarn_dialogue *dialogue, char *cmd) {
     printf("Command fired: %s\n", cmd);
     yarn_continue(dialogue);
 }
-#define _CRT_SECURE_NO_WARNINGS 1
 
 char *read_entire_file(char *file_name, size_t *bytes_read) {
     assert(file_name && bytes_read);

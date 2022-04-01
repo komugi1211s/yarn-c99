@@ -326,16 +326,6 @@ typedef void yarn_node_complete_handler_func(yarn_dialogue *dialogue, char *node
 typedef void yarn_dialogue_complete_handler_func(yarn_dialogue *dialogue);
 typedef void yarn_prepare_for_lines_handler_func(yarn_dialogue *dialogue, char **ids, int ids_count);
 
-/*
- * Stubs!
- */
-YARN_C99_DEF yarn_line_handler_func              yarn__stub_line_handler;
-YARN_C99_DEF yarn_option_handler_func            yarn__stub_option_handler;
-YARN_C99_DEF yarn_command_handler_func           yarn__stub_command_handler;
-YARN_C99_DEF yarn_node_start_handler_func        yarn__stub_node_start_handler;
-YARN_C99_DEF yarn_node_complete_handler_func     yarn__stub_node_complete_handler;
-YARN_C99_DEF yarn_dialogue_complete_handler_func yarn__stub_dialogue_complete_handler;
-YARN_C99_DEF yarn_prepare_for_lines_handler_func yarn__stub_prepare_for_lines_handler;
 
 
 /* =============================================
@@ -359,6 +349,8 @@ typedef enum {
     YARN_EXEC_RUNNING,
 } yarn_exec_state;
 
+/* Logger function. same as C# implementation. */
+typedef void yarn_logger_func(char *message);
 
 struct yarn_dialogue {
     // ProtobufCAllocator *program_allocator;
@@ -368,6 +360,9 @@ struct yarn_dialogue {
     yarn_exec_state     execution_state;
 
     /* Delegates. */
+    yarn_logger_func *log_debug;
+    yarn_logger_func *log_error;
+
     yarn_line_handler_func              *line_handler;
     yarn_option_handler_func            *option_handler;
     yarn_command_handler_func           *command_handler;
@@ -526,6 +521,26 @@ YARN_C99_DEF char *yarn__get_visited_name_for_node(char *name);
 /* Asserts if the yarn dialogue can be continued. */
 YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
 
+/* Logs message. */
+YARN_C99_DEF void yarn__logdebug(yarn_dialogue *dialogue, char *fmt, ...);
+YARN_C99_DEF void yarn__logerror(yarn_dialogue *dialogue, char *fmt, ...);
+
+/*
+ * Stubs!
+ */
+/* stub for logging */
+YARN_C99_DEF yarn_logger_func                    yarn__stub_log_debug;
+YARN_C99_DEF yarn_logger_func                    yarn__stub_log_error;
+
+/* stub for delegates */
+YARN_C99_DEF yarn_line_handler_func              yarn__stub_line_handler;
+YARN_C99_DEF yarn_option_handler_func            yarn__stub_option_handler;
+YARN_C99_DEF yarn_command_handler_func           yarn__stub_command_handler;
+YARN_C99_DEF yarn_node_start_handler_func        yarn__stub_node_start_handler;
+YARN_C99_DEF yarn_node_complete_handler_func     yarn__stub_node_complete_handler;
+YARN_C99_DEF yarn_dialogue_complete_handler_func yarn__stub_dialogue_complete_handler;
+YARN_C99_DEF yarn_prepare_for_lines_handler_func yarn__stub_prepare_for_lines_handler;
+
 /* functions for default (dynamic array based) storage. */
 YARN_C99_DEF yarn_value yarn__load_from_default_storage(void *istorage, char *var_name);
 YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *var_name, yarn_value value);
@@ -542,6 +557,7 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
 #define YARN_C99_IMPLEMENT_COMPLETE
 
 #include <assert.h>
+#include <stdarg.h> /* for logging */
 #include <string.h> /* for strncmp, memset */
 #include <stdio.h>  /* TODO: @cleanup cleanup. basically here for printf debugging */
 
@@ -748,13 +764,14 @@ int yarn_continue(yarn_dialogue *dialogue) {
             yarn__reset_state(dialogue); /* original version has a setter that resets VM state when operation stops. */
 
             dialogue->dialogue_complete_handler(dialogue);
-            /* TODO: @logging log message */
+            yarn__logdebug(dialogue, "dialogue complete.");
         }
     }
 
     return 0;
 }
 
+/* TODO: subject to cleanup. */
 char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line) {
     size_t given_id_length = strlen(line->id);
     char *result = 0;
@@ -824,13 +841,14 @@ int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
     }
 
     if (index == -1) {
-        printf("No node named %s has been loaded.\n", node_name);
-        assert(0);
+        yarn__logerror(dialogue, "No node named %s", node_name);
+        return -1;
     }
 
     yarn__reset_state(dialogue);
     dialogue->current_node = index;
 
+    yarn__logdebug(dialogue, "Running node %s", node_name);
     if (dialogue->node_start_handler) {
         dialogue->node_start_handler(dialogue, node_name);
         if (dialogue->prepare_for_lines_handler) {
@@ -897,6 +915,9 @@ yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
     dialogue->stack_ptr = 0;
     memset(dialogue->stack, 0, sizeof(yarn_value) * YARN_STACK_CAPACITY);
 
+
+    dialogue->log_debug                 = &yarn__stub_log_debug;
+    dialogue->log_error                 = &yarn__stub_log_error;
     dialogue->line_handler              = &yarn__stub_line_handler;
     dialogue->option_handler            = &yarn__stub_option_handler;
     dialogue->command_handler           = &yarn__stub_command_handler;
@@ -916,6 +937,7 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
     if (dialogue->program)
         yarn__program__free_unpacked(dialogue->program, 0); /* TODO: @allocator */
 
+    /* TODO: @allocator */
     for (size_t i = 0; i < dialogue->current_options.used; ++i) {
         yarn_option opt = dialogue->current_options.entries[i];
         if (opt.line.n_substitutions > 0) {
@@ -932,7 +954,6 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
 }
 
 yarn_variable_storage yarn_create_default_storage() {
-
     yarn_kvmap kvmap = yarn_kvcreate(yarn_value, 64);
     yarn_kvmap *m = YARN_MALLOC(sizeof(yarn_kvmap));
 
@@ -985,14 +1006,15 @@ int yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *loading_function
         }
 
         if(yarn_kvhas(&dialogue->library, f.name)) {
-            printf("Multiple declaration of same name.\n   conflicted name: %s\n", f.name);
-            assert(0 && "Multiple declaration of same name");
+            yarn__logerror(dialogue, "function `%s` is already defined", f.name);
+            return -1;
         }
 
         yarn_function_entry ent = {0};
         ent.function    = f.function;
         ent.param_count = f.param_count;
         yarn_kvpush(&dialogue->library, f.name, ent);
+        inserted++;
     }
 
     return inserted;
@@ -1033,6 +1055,18 @@ typedef YARN_DYN_ARRAY(char)  yarn__str_builder;
 /* ===========================================
  * Stub 
  */
+
+void yarn__stub_log_debug(char *message) {
+#if !defined(YARN_C99_STUB_TO_NOOP)
+    fprintf(stdout, "[Yarn: Debug] %s\n", message);
+#endif
+}
+
+void yarn__stub_log_error(char *message) {
+#if !defined(YARN_C99_STUB_TO_NOOP)
+    fprintf(stderr, "[Yarn: Error] %s\n", message);
+#endif
+}
 
 void yarn__stub_line_handler(yarn_dialogue *dialogue, yarn_line *line) {
 #if !defined(YARN_C99_STUB_TO_NOOP)
@@ -1282,16 +1316,17 @@ uint32_t yarn__hashstr(char *str, size_t length) {
     return h;
 }
 
+/* returns 0 on no-op, 1 on success, -1 on memory allocation failure. */
 int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps) {
     if (used >= *caps) {
         size_t new_caps = (*caps) * 2;
         void *new_ptr = YARN_REALLOC(*ptr, elem_size * new_caps);
 
         if (new_ptr) {
-            *ptr = new_ptr;
+            *ptr  = new_ptr;
             *caps = new_caps;
         } else {
-            /* TODO: @logging */
+            return -1;
         }
 
         return 1;
@@ -1547,6 +1582,29 @@ void yarn__reset_state(yarn_dialogue *dialogue) {
     dialogue->current_node = 0;
 }
 
+void yarn__logdebug(yarn_dialogue *dialogue, char *fmt, ...) {
+    char buffer[1024] = {0}; /* TODO: @limit */
+
+    if (dialogue->log_debug) {
+        va_list vl;
+        va_start(vl, fmt);
+        vsnprintf(buffer, sizeof(buffer)-1, fmt, vl);
+        dialogue->log_debug(buffer);
+        va_end(vl);
+    }
+}
+
+void yarn__logerror(yarn_dialogue *dialogue, char *fmt, ...) {
+    char buffer[1024] = {0}; /* TODO: @limit */
+    if (dialogue->log_error) {
+        va_list vl;
+        va_start(vl, fmt);
+        vsnprintf(buffer, sizeof(buffer)-1, fmt, vl);
+        dialogue->log_error(buffer);
+        va_end(vl);
+    }
+}
+
 int yarn__find_instruction_point_for_label(yarn_dialogue *dialogue, char *label) {
     Yarn__Node *node = dialogue->program->nodes[dialogue->current_node]->value;
     size_t strlength = strlen(label);
@@ -1614,8 +1672,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             }
 
             if (v.type == YARN_VALUE_NONE) {
-                printf("Variable %s undefined.\n", varname);
-                assert(0);
+                yarn__logerror(dialogue, "undefined variable: `%s`", varname);
             } else {
                 yarn_push_value(dialogue, v);
             }
@@ -1626,6 +1683,8 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             Yarn__Node *node = dialogue->program->nodes[dialogue->current_node]->value;
             dialogue->node_complete_handler(dialogue, node->name);
             dialogue->dialogue_complete_handler(dialogue);
+            yarn__logdebug(dialogue, "node `%s` complete. (encountered opcode `stop`)", node->name);
+            yarn__logdebug(dialogue, "dialogue complete. (encountered opcode `stop`)");
 
             /* Increments visited value. */
             int visited = yarn__get_visited_count(dialogue, node->name) + 1;
@@ -1706,7 +1765,13 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             assert(jump_to->type == YARN_VALUE_STRING);
 
             char *label = jump_to->values.v_string;
-            dialogue->current_instruction = yarn__find_instruction_point_for_label(dialogue, label) - 1;
+            int jump_to_idx = yarn__find_instruction_point_for_label(dialogue, label);
+            if (jump_to_idx == -1) {
+                yarn__logerror(dialogue, "could not find jump label `%s`", label);
+                return;
+            }
+
+            dialogue->current_instruction = jump_to_idx - 1;
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__JUMP_IF_FALSE:
@@ -1715,7 +1780,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             if (!b) {
                 assert(inst->n_operands >= 1);
                 char *label = inst->operands[0]->string_value;
-                dialogue->current_instruction = yarn__find_instruction_point_for_label(dialogue, label) - 1;
+                int jump_to = yarn__find_instruction_point_for_label(dialogue, label);
+                if (jump_to == -1) {
+                    yarn__logerror(dialogue, "could not find jump label `%s`", label);
+                    return;
+                }
+                dialogue->current_instruction = jump_to - 1;
             }
         } break;
 
@@ -1723,7 +1793,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
         {
             assert(inst->n_operands >= 1);
             char *label = inst->operands[0]->string_value;
-            dialogue->current_instruction = yarn__find_instruction_point_for_label(dialogue, label) - 1;
+            int jump_to = yarn__find_instruction_point_for_label(dialogue, label);
+            if (jump_to == -1) {
+                yarn__logerror(dialogue, "could not find jump label `%s`", label);
+                return;
+            }
+            dialogue->current_instruction = jump_to - 1;
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__ADD_OPTION:
@@ -1769,6 +1844,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                 dialogue->execution_state = YARN_EXEC_STOPPED;
                 yarn__reset_state(dialogue);
                 dialogue->dialogue_complete_handler(dialogue);
+                yarn__logdebug(dialogue, "dialogue complete. (encountered `Show Options` with 0 current option available)");
                 break;
             }
 
@@ -1867,16 +1943,15 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             char *func_name = key_operand->string_value;
             yarn_function_entry func = yarn_get_function_with_name(dialogue, func_name);
             if (!func.function) {
-                printf("Function named `%s`(param count %d) does not exist.\n", func_name, actual_params);
-                assert(0);
+                yarn__logerror(dialogue, "undefined function `%s` (takes %d argument(s))", func_name, actual_params);
+                return;
             }
 
             int expect_params = func.param_count;
             if (expect_params != actual_params) {
-                printf("[YARN SPINNER]: Runtime error -- function named %s expects %d arguments, but %d provided.\n",
-                        func_name, expect_params, actual_params);
+                yarn__logerror(dialogue, "argument count mismatch for function `%s` -- expected %d, passed %d", func_name, expect_params, actual_params);
+                return;
             }
-            assert(expect_params == actual_params && "Parameter count mismatch");
 
             /* NOTE: @deviation
              *  In original implementation of Yarn VM, the compiler creates an array of
@@ -1892,14 +1967,23 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
             /* TODO: @allocator what if user allocates string here and return it?
              * who holds ownership to that pointer ? */
             yarn_value value = func.function(dialogue);
-            assert(expect_stack_position == dialogue->stack_ptr);
+
+            if (expect_stack_position != dialogue->stack_ptr) {
+                yarn__logerror(dialogue, "stack compromised after calling `%s` -- stack pointer expected: %d, actual: %d",
+                               func_name, expect_stack_position, dialogue->stack_ptr);
+                return;
+            }
 
             if (value.type != YARN_VALUE_NONE) {
                 yarn_push_value(dialogue, value);
             }
         } break;
 
-        default: assert(0 && "Unhandled");
+        default:
+        {
+            yarn__logerror(dialogue, "encountered unknown instruction ID `%d`", inst->opcode);
+            return;
+        };
     }
 }
 

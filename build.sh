@@ -13,5 +13,4 @@ else
 fi
 
 ctags ./src/yarn_c99.h
-echo "clang $CFLAGS -std=gnu99 -o $EXEC_FILE_NAME src/main.c -fno-caret-diagnostics"
 clang $CFLAGS -std=gnu99 -o $EXEC_FILE_NAME src/main.c -fno-caret-diagnostics
