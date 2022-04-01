@@ -1376,7 +1376,7 @@ yarn_value yarn__number_divide(yarn_dialogue *dialogue) {
     float right = yarn_value_as_float(yarn_pop_value(dialogue));
     float left  = yarn_value_as_float(yarn_pop_value(dialogue));
 
-    assert(left != 0.0 && "Division by zero!!!!!!!!");
+    assert(right != 0.0 && "Division by zero!!!!!!!!");
     return yarn_float(left / right);
 }
 
