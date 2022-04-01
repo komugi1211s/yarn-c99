@@ -187,6 +187,7 @@ void load_program(yarn_dialogue *dialogue, char *yarnc_name) {
     char *yarn_c = read_entire_file(yarnc_name, &yarn_c_size);
 
     yarn_load_program(dialogue, yarn_c, yarn_c_size);
+    free(yarn_c);
 }
 
 void load_string_table(yarn_string_table *strtable, char *csv_name) {
