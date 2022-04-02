@@ -66,6 +66,7 @@ info:
  *   - (@limit)     unnecessary limit that still remains in code because it was easier to do that way. not anymore. fix
  *
  * - more tests (most of the code feels pretty fragile, though this should be done after most of the todo above is done)
+ *   - (@danger)  something that will bite me someday. remove all of it before pushing into main.
  * - compile without protobuf (create converter? this can't be that hard, just receive generated code and reallocate everything into my own program defined here.)
  * */
 
@@ -133,15 +134,16 @@ struct yarn_variable_storage {
     yarn_save_variable_func *save;
 };
 
-typedef enum {
+enum {
     YARN_VALUE_NONE = 0, /* corresponds to null, although it's not valid in 2.0 */
     YARN_VALUE_STRING,
     YARN_VALUE_BOOL,
     YARN_VALUE_FLOAT,
-} yarn_value_type;
+    YARN_VALUE_COUNT,
+};
 
 struct yarn_value {
-    yarn_value_type type;
+    int type;
     union {
         char *v_string;
         int   v_bool;
@@ -234,7 +236,7 @@ typedef struct {
 #define yarn_kvforeach(map, key_ptr, value_ptr) \
     for(int kv_iter = yarn_kviternext((map), (key_ptr), (value_ptr), 0); \
         kv_iter != -1; \
-        kv_iter = yarn_kviternext((map), (key_ptr), (value_ptr), 0))\
+        kv_iter = yarn_kviternext((map), (key_ptr), (value_ptr), kv_iter))\
         if (kv_iter == -1) { break; } else
 
 /* =============================================
@@ -323,7 +325,7 @@ typedef YARN_DYN_ARRAY(yarn_option) yarn_option_set;
 typedef yarn_value yarn_function(yarn_dialogue *dialogue);
 
 typedef struct {
-    char            *name;
+    const char      *name;
     yarn_function   *function;
     int              param_count;
 } yarn_func_reg;
@@ -484,10 +486,10 @@ YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, y
 extern yarn_func_reg yarn__standard_libs[];
 
 /* Hashes string. */
-YARN_C99_DEF uint32_t yarn__hashstr(char *str, size_t strlength);
+YARN_C99_DEF uint32_t yarn__hashstr(const char *str, size_t strlength);
 
 /* strndup implementation that uses YARN_MALLOC. */
-YARN_C99_DEF char *yarn__strndup(char *original, size_t length);
+YARN_C99_DEF char *yarn__strndup(const char *original, size_t length);
 
 /* tries to extend dynamic array. */
 YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps);
@@ -497,13 +499,13 @@ YARN_C99_DEF yarn_kvmap yarn__kvmap_create(size_t elem_size, size_t caps); /* re
 YARN_C99_DEF void yarn__kvmap_destroy(yarn_kvmap *map);                    /* frees entire map. */
 
 /* pushes element into map. element_size must match with map->impl->element_size. */
-YARN_C99_DEF int yarn__kvmap_pushsize(yarn_kvmap *map, char *key, void *value, size_t element_size); 
+YARN_C99_DEF int yarn__kvmap_pushsize(yarn_kvmap *map, const char *key, void *value, size_t element_size); 
 
 /* get element from map, and write into value if given valid pointer. returns -1 if does not exist. */
-YARN_C99_DEF int yarn__kvmap_get(yarn_kvmap *map, char *key, void *value, size_t element_size);
+YARN_C99_DEF int yarn__kvmap_get(yarn_kvmap *map, const char *key, void *value, size_t element_size);
 
 /* delete element from map, and rearrange. */
-YARN_C99_DEF int yarn__kvmap_delete(yarn_kvmap *map, char *key);
+YARN_C99_DEF int yarn__kvmap_delete(yarn_kvmap *map, const char *key);
 
 /* recreate the whole map if the current map's used up space meets certain threshold. */
 YARN_C99_DEF int yarn__kvmap_maybe_rehash(yarn_kvmap *map);
@@ -541,8 +543,8 @@ YARN_C99_DEF char *yarn__get_visited_name_for_node(char *name);
 YARN_C99_DEF void yarn__check_if_i_can_continue(yarn_dialogue *dialogue);
 
 /* Logs message. */
-YARN_C99_DEF void yarn__logdebug(yarn_dialogue *dialogue, char *fmt, ...);
-YARN_C99_DEF void yarn__logerror(yarn_dialogue *dialogue, char *fmt, ...);
+YARN_C99_DEF void yarn__logdebug(yarn_dialogue *dialogue, const char *fmt, ...);
+YARN_C99_DEF void yarn__logerror(yarn_dialogue *dialogue, const char *fmt, ...);
 
 /*
  * Stubs!
@@ -606,7 +608,7 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
 #define YARN_MAKE_DYNARRAY(target, elemtype, cap) do { \
     (target)->capacity  = cap;                         \
     (target)->used      = 0;                           \
-    (target)->entries   = YARN_MALLOC(cap * sizeof(elemtype)); \
+    (target)->entries   = (elemtype *)YARN_MALLOC(cap * sizeof(elemtype)); \
 } while(0)
 
 /* TODO: @cleanup why is it so different from hashmap???? */
@@ -701,9 +703,8 @@ int yarn_value_as_bool(yarn_value value) {
 
 char *yarn_format_value(yarn_value value) {
     switch(value.type) {
-
         case YARN_VALUE_BOOL:
-            return (!!value.values.v_bool) ? "true" : "false";
+            return (char *)((!!value.values.v_bool) ? "true" : "false"); /* TODO: @danger literal to char conversion */
 
         case YARN_VALUE_STRING:
             return yarn__strndup(value.values.v_string, strlen(value.values.v_string));
@@ -718,14 +719,14 @@ char *yarn_format_value(yarn_value value) {
 
         case YARN_VALUE_NONE:
         default:
-            return "None";
+            return (char*)"None"; /* TODO: @danger literal to char conversion */
     }
 }
 
 void  yarn_destroy_formatted_string(char *formatted_string) {
     size_t length = strlen(formatted_string);
 
-    /* Static text will be ignored. */
+    /* TODO: @danger  */
     if (length == 4 && strncmp(formatted_string, "true",  length) == 0) return;
     if (length == 5 && strncmp(formatted_string, "false", length) == 0) return;
     if (length == 4 && strncmp(formatted_string, "None",  length) == 0) return;
@@ -864,7 +865,7 @@ int yarn_set_node(yarn_dialogue *dialogue, char *node_name) {
     if (dialogue->node_start_handler) {
         dialogue->node_start_handler(dialogue, node_name);
         if (dialogue->prepare_for_lines_handler) {
-            char **ids = YARN_MALLOC(sizeof(void *) * node->n_instructions);
+            char **ids = (char **)YARN_MALLOC(sizeof(void *) * node->n_instructions);
             int n_ids = 0;
             for (int i = 0; i < node->n_instructions; ++i) {
                 struct Yarn__Instruction *inst = node->instructions[i];
@@ -914,7 +915,7 @@ int yarn_select_option(yarn_dialogue *dialogue, int select_option) {
 }
 
 yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
-    yarn_dialogue *dialogue = YARN_MALLOC(sizeof(yarn_dialogue));
+    yarn_dialogue *dialogue = (yarn_dialogue *)YARN_MALLOC(sizeof(yarn_dialogue));
 
     dialogue->program = 0;
     dialogue->strings = 0;
@@ -967,7 +968,7 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
 
 yarn_variable_storage yarn_create_default_storage() {
     yarn_kvmap kvmap = yarn_kvcreate(yarn_value, 64);
-    yarn_kvmap *m = YARN_MALLOC(sizeof(yarn_kvmap));
+    yarn_kvmap *m = (yarn_kvmap *)YARN_MALLOC(sizeof(yarn_kvmap));
 
     *m = kvmap;
 
@@ -980,13 +981,13 @@ yarn_variable_storage yarn_create_default_storage() {
 }
 
 void yarn_destroy_default_storage(yarn_variable_storage storage) {
-    yarn_kvmap *kvmap = storage.data;
+    yarn_kvmap *kvmap = (yarn_kvmap *)storage.data;
     yarn_kvdestroy(kvmap);
     YARN_FREE(storage.data);
 }
 
 yarn_string_table *yarn_create_string_table() {
-    yarn_string_table *table = YARN_MALLOC(sizeof(yarn_string_table));
+    yarn_string_table *table = (yarn_string_table *)YARN_MALLOC(sizeof(yarn_string_table));
 
     table->table = yarn_kvcreate(yarn_parsed_entry, 512);
     return table;
@@ -1044,7 +1045,7 @@ int yarn_load_program(
     dialogue->program = yarn__program__unpack(
         0, /* TODO: @allocator */
         program_length,
-        program_buffer);
+        (const uint8_t *)program_buffer);
 
     return 1;
 }
@@ -1152,7 +1153,7 @@ yarn_kvmap yarn__kvmap_create(size_t elem_size, size_t caps) {
     size_t chunk_size  = sizeof(yarn_kvpair_header) + elem_size;
     map.element_size = elem_size;
     map.capacity     = caps;
-    map.entries      = YARN_MALLOC(chunk_size * caps);
+    map.entries      = (char *)YARN_MALLOC(chunk_size * caps);
     map.used         = 0;
     assert(map.entries);
 
@@ -1224,7 +1225,7 @@ void yarn__kvmap_destroy(yarn_kvmap *map) {
     YARN_FREE(map->entries);
 }
 
-int yarn__kvmap_pushsize(yarn_kvmap *map, char *key, void *value, size_t element_size) {
+int yarn__kvmap_pushsize(yarn_kvmap *map, const char *key, void *value, size_t element_size) {
     assert(map && map->element_size == element_size);
     assert(key && value);
     yarn__kvmap_maybe_rehash(map);
@@ -1260,7 +1261,7 @@ int yarn__kvmap_pushsize(yarn_kvmap *map, char *key, void *value, size_t element
     return (int)bucket;
 }
 
-int yarn__kvmap_get(yarn_kvmap *map, char *key, void *value, size_t element_size) {
+int yarn__kvmap_get(yarn_kvmap *map, const char *key, void *value, size_t element_size) {
     assert(map && key && map->entries);
     if (value)
         assert(element_size == map->element_size);
@@ -1291,19 +1292,20 @@ int yarn__kvmap_get(yarn_kvmap *map, char *key, void *value, size_t element_size
     return -1;
 }
 
-int yarn__kvmap_delete(yarn_kvmap *map, char *key) {
+int yarn__kvmap_delete(yarn_kvmap *map, const char *key) {
     assert(map && key);
     if (map->used == 0) return -1;
 
     size_t keylen   = strlen(key);
     uint32_t hash   = yarn__hashstr(key, keylen);
     uint32_t bucket = hash % map->capacity;
+    uint32_t previous_bucket = bucket;
 
     yarn_kvpair_header *emptied = 0;
-    yarn_kvpair_header *header  = 0;
+    yarn_kvpair_header *header  = YARN__KV_INDEXOF(map, bucket);
     while(header->key) {
-        if (header->hash == hash && header->keylen == keylen) {
-            if (!emptied) { /* hasn't found yet. delete the entry itself. */
+        if (!emptied) {
+            if (header->hash == hash && header->keylen == keylen) {
                 if (strncmp(header->key, key, keylen) == 0) {
                     YARN_FREE(header->key);
                     header->key    = 0;
@@ -1311,8 +1313,11 @@ int yarn__kvmap_delete(yarn_kvmap *map, char *key) {
                     header->hash   = 0;
 
                     emptied = header;
+                    previous_bucket = bucket;
                 }
-            } else {
+            }
+        } else {
+            if ((header->hash % map->capacity) == previous_bucket) {
                 /* move current header's content to emptied cell, then mark current header as emptied */
                 emptied->key    = header->key;
                 emptied->keylen = header->keylen;
@@ -1323,10 +1328,10 @@ int yarn__kvmap_delete(yarn_kvmap *map, char *key) {
                 header->key    = 0; /* don't free, emptied->key holds it */
 
                 emptied = header;
+                previous_bucket = bucket;
                 /* continue probing until actually empty cell is found */
             }
         }
-
         bucket = (bucket + 1) % map->capacity;
         header = YARN__KV_INDEXOF(map, bucket);
     }
@@ -1339,7 +1344,7 @@ int yarn__kvmap_delete(yarn_kvmap *map, char *key) {
 /* ===========================================
  * Utilities.
  */
-uint32_t yarn__hashstr(char *str, size_t length) {
+uint32_t yarn__hashstr(const char *str, size_t length) {
     (void)sizeof(length); /* UNUSED */
 
     /* DJB2 */
@@ -1369,8 +1374,8 @@ int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size
     return 0;
 }
 
-char *yarn__strndup(char *cloning, size_t length) {
-    char *result = YARN_MALLOC(length + 1);
+char *yarn__strndup(const char *cloning, size_t length) {
+    char *result = (char *)YARN_MALLOC(length + 1);
     memset(result, 0, length + 1);
 
     for (size_t i = 0; i < length; ++i) {
@@ -1392,7 +1397,6 @@ yarn_value yarn__load_from_default_storage(void *istorage, char *var_name) {
 }
 
 void yarn__save_into_default_storage(void *istorage, char *var_name, yarn_value value) {
-    yarn_kvmap map = { istorage };
     yarn_kvpush((yarn_kvmap*)istorage, var_name, value);
 }
 
@@ -1617,7 +1621,7 @@ void yarn__reset_state(yarn_dialogue *dialogue) {
     dialogue->current_node = 0;
 }
 
-void yarn__logdebug(yarn_dialogue *dialogue, char *fmt, ...) {
+void yarn__logdebug(yarn_dialogue *dialogue, const char *fmt, ...) {
     char buffer[1024] = {0}; /* TODO: @limit */
 
     if (dialogue->log_debug) {
@@ -1629,7 +1633,7 @@ void yarn__logdebug(yarn_dialogue *dialogue, char *fmt, ...) {
     }
 }
 
-void yarn__logerror(yarn_dialogue *dialogue, char *fmt, ...) {
+void yarn__logerror(yarn_dialogue *dialogue, const char *fmt, ...) {
     char buffer[1024] = {0}; /* TODO: @limit */
     if (dialogue->log_error) {
         va_list vl;
@@ -1766,7 +1770,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore implementation-defined */
                 if (expr_count > 0) {
                     /* TODO: @allocator stack allocator would work wonderfully here */
-                    char **substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
+                    char **substitutions = (char **)YARN_MALLOC(sizeof(char *) * expr_count);
                     n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
@@ -1851,7 +1855,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore implementation defined */
                 if (expr_count > 0) {
                     /* TODO: @allocator stack allocator would work wonderfully here */
-                    option.line.substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
+                    option.line.substitutions = (char **)YARN_MALLOC(sizeof(char *) * expr_count);
                     option.line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
@@ -1912,7 +1916,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
                 if (expr_count > 0) {
                     /* TODO: @allocator stack allocator would work wonderfully here */
-                    line.substitutions = YARN_MALLOC(sizeof(char *) * expr_count);
+                    line.substitutions = (char **)YARN_MALLOC(sizeof(char *) * expr_count);
                     line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
@@ -2075,7 +2079,7 @@ char *yarn__substitute_string(char *format, char **substs, int n_substs) {
  */
 
 typedef struct {
-    char *word;
+    const char *word;
     size_t size;
 } yarn__expect_csv_column;
 
@@ -2088,9 +2092,30 @@ const yarn__expect_csv_column expect_column[] = {
     { "lineNumber", sizeof("lineNumber") - 1 },
 };
 
+int yarn__parse_linenumber(char *str, size_t begin, size_t length, int current_line) {
+    int result_number = 0;
+    for (int i = 0; i < length; ++i) {
+        /* TODO: @limit handle other than ascii */
+        char c = str[begin + i];
+        int  n = c - '0';
+        if (n < 0 || n > 9) {
+            printf("error(csv line %d): encountered char `%c` while parsing line number.\n", current_line, n);
+            return -1;
+        }
+
+        if (((INT_MAX - n) / 10) < result_number) {
+            printf("error(csv line %d): integer overflow (max %d, parsed until %d%d...)\n", current_line, INT_MAX, result_number, n);
+            return -1;
+        }
+
+        result_number = result_number * 10 + n;
+    }
+    return result_number;
+}
+
 /* quick and dirty CSV parsing. */
 int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer, size_t string_table_length) {
-    char *begin = string_table_buffer;
+    char *begin = (char *)string_table_buffer;
     size_t current     = 0;
     size_t advanced    = 0;
     int column_count   = 0;
@@ -2106,6 +2131,18 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
     while(current < string_table_length && advanced < string_table_length) {
         assert(current_column <= column_count);
         if (begin[advanced] == '\0') {
+            /*
+             * NOTE: csv may or may not end it's content with linebreak,
+             * meaning that I still have to check if I'm still parsing when I encounter EOF */
+            if (current_column == 4) {
+                size_t consumed_since = advanced - current;
+                int number = yarn__parse_linenumber(begin, current, consumed_since, current_line);
+                if (number == -1) goto errored;
+                line.line_number = number;
+
+                yarn_kvpush(&table->table, line_id, line);
+                YARN_FREE(line_id);
+            }
             current = advanced;
             break;
         }
@@ -2135,6 +2172,13 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                 }
 
                 if (!parsing_first_line) {
+                    size_t consumed_since = advanced - current;
+                    if (current_column == 4) {
+                        int number = yarn__parse_linenumber(begin, current, consumed_since, current_line);
+                        if (number == -1) goto errored;
+                        line.line_number = number;
+                    }
+
                     yarn_kvpush(&table->table, line_id, line);
                     YARN_FREE(line_id);
 
@@ -2197,54 +2241,33 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                     }
 
                     char *current_ptr = &begin[current];
-                    if (current_column == 4) {
-                        int result_number = 0;
-                        for (int i = 0; i < consumed_since; ++i) {
-                            /* TODO: @limit handle other than ascii */
-                            char c = begin[current+i];
-                            int  n = c - '0';
-                            if (n < 0 || n > 9) {
-                                printf("error(csv line %d): encountered char `%c` while parsing line number.\n", current_line, n);
-                                goto errored;
-                            }
+                    char *dupped_str = yarn__strndup(current_ptr, consumed_since);
+                    size_t strlength = consumed_since;
+                    char *escaped_quote_at = strstr(dupped_str, "\"\""); /* search escaped quote. */
 
-                            if ((INT_MAX - n) / 10 >= result_number) {
-                                printf("error(csv line %d): integer overflow\n", current_line);
-                                goto errored;
-                            }
+                    while (escaped_quote_at) { /* escaped_quote_at points to the beginning of double quote escape. */
+                        /* how many char is remaining past escaped quote position? */
+                        size_t remaining = strlength - (escaped_quote_at - dupped_str) - 1;
 
-                            result_number = result_number * 10 + n;
-                        }
-                        line.line_number = result_number;
+                        memmove(escaped_quote_at,     /* first position of escaped quote */
+                                escaped_quote_at + 1, /* second after the escaped quote    */
+                                remaining);       /* since we're skipping 1 doublequote, subtract 1 from move amount */
+
+                        dupped_str[--strlength] = '\0'; /* shift consumed_since */
+                        escaped_quote_at = strstr(escaped_quote_at, "\"\""); /* continue */
+                    }
+
+                    if (current_column == 0) {        /* id */
+                        line_id = dupped_str;
+                    } else if (current_column == 1) { /* text */
+                        line.text = dupped_str;
+                    } else if (current_column == 2) { /* file */
+                        line.file = dupped_str;
+                    } else if (current_column == 3) {
+                        line.node = dupped_str;
                     } else {
-                        char *dupped_str = yarn__strndup(current_ptr, consumed_since);
-                        size_t strlength = consumed_since;
-                        char *escaped_quote_at = strstr(dupped_str, "\"\""); /* search escaped quote. */
-
-                        while (escaped_quote_at) { /* escaped_quote_at points to the beginning of double quote escape. */
-                            /* how many char is remaining past escaped quote position? */
-                            size_t remaining = strlength - (escaped_quote_at - dupped_str) - 1;
-
-                            memmove(escaped_quote_at,     /* first position of escaped quote */
-                                    escaped_quote_at + 1, /* second after the escaped quote    */
-                                    remaining);       /* since we're skipping 1 doublequote, subtract 1 from move amount */
-
-                            dupped_str[--strlength] = '\0'; /* shift consumed_since */
-                            escaped_quote_at = strstr(escaped_quote_at, "\"\""); /* continue */
-                        }
-
-                        if (current_column == 0) {        /* id */
-                            line_id = dupped_str;
-                        } else if (current_column == 1) { /* text */
-                            line.text = dupped_str;
-                        } else if (current_column == 2) { /* file */
-                            line.file = dupped_str;
-                        } else if (current_column == 3) {
-                            line.node = dupped_str;
-                        } else {
-                            printf("error(csv line %d): unexpected column\n", current_line);
-                            goto errored;
-                        }
+                        printf("error(csv line %d): unexpected column\n", current_line);
+                        goto errored;
                     }
                 }
 
@@ -2258,7 +2281,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
     }
 
 done:
-    if (current != string_table_length) {
+    if (string_table_length < current || begin[current] != '\0') { /* (string table length - 1) == position of '\0' */
         printf("error: couldn't parse until the end of the string table. data possibly corrupted\n");
         goto errored;
     }

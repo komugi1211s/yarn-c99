@@ -194,7 +194,7 @@ void load_string_table(yarn_string_table *strtable, char *csv_name) {
     size_t csv_file_size = 0;
     char *csv_data = read_entire_file(csv_name, &csv_file_size);
 
-    yarn_load_string_table(strtable, csv_data, csv_file_size);
+    yarn_load_string_table(strtable, csv_data, csv_file_size + 1);
 
     free(csv_data);
 }

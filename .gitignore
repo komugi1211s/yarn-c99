@@ -1,3 +1,4 @@
+.vs
 dist/
 tags
 
@@ -9,3 +10,8 @@ massif.*
 callgrind.*
 perf.*
 
+
+*/*.exe
+*/*.obj
+*/*.pdb
+*/*.ilk
