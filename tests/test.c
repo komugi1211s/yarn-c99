@@ -69,9 +69,23 @@ UTEST_F_TEARDOWN(TableF) {
     yarn_destroy_string_table(utest_fixture->t);
 }
 
-UTEST_F(TableF, should_success) {
-    const char safe[] = "id,text,file,node,lineNumber\nline:a,\"hey hello there\",testfile,Start,2147483647";
+UTEST_F(TableF, success_normal) {
+    const char safe[] = "id,text,file,node,lineNumber\nline:a,\"hey hello there\",testfile,Start,0\r\nline:b,\"hey hello there\",testfile,Start,11";
+    const char safe2[] = "id,text,file,node,lineNumber\nline:a,\"hey hello there\",testfile,Start,0\nline:b,\"hey hello there\",testfile,Start,2147483647\n"; /* barely non-overflow, with linebreak at the end */
     ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe, sizeof(safe)));
+    ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe2, sizeof(safe2)));
+}
+UTEST_F(TableF, success_with_crlf) {
+    const char safe[] = "id,text,file,node,lineNumber\r\nline:a,\"hey hello there\",testfile,Start,2147483647";
+    const char safe2[] = "id,text,file,node,lineNumber\r\nline:a,\"hey hello there\",testfile,Start,2147483647\r\n";
+    ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe, sizeof(safe)));
+    ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe2, sizeof(safe2)));
+}
+UTEST_F(TableF, success_empty_table) {
+    const char safe[] = "id,text,file,node,lineNumber";
+    const char safe2[] = "id,text,file,node,lineNumber\n";
+    ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe, sizeof(safe)));
+    ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe2, sizeof(safe2)));
 }
 
 UTEST_F(TableF, should_completely_overflow) {
