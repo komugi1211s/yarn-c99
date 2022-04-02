@@ -2099,7 +2099,7 @@ int yarn__parse_linenumber(char *str, size_t begin, size_t length, int current_l
         char c = str[begin + i];
         int  n = c - '0';
         if (n < 0 || n > 9) {
-            printf("error(csv line %d): encountered char `%c` while parsing line number.\n", current_line, n);
+            printf("error(csv line %d): encountered char `%c` while parsing line number.\n", current_line, c);
             return -1;
         }
 
@@ -2134,7 +2134,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
             /*
              * NOTE: csv may or may not end it's content with linebreak,
              * meaning that I still have to check if I'm still parsing when I encounter EOF */
-            if (current_column == 4) {
+            if (!parsing_first_line && current_column == 4) {
                 size_t consumed_since = advanced - current;
                 int number = yarn__parse_linenumber(begin, current, consumed_since, current_line);
                 if (number == -1) goto errored;
@@ -2159,6 +2159,7 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                 }
             } break;
 
+            case '\r':
             case '\n':
             {
                 if (in_quote) {
@@ -2171,7 +2172,9 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                     goto errored;
                 }
 
-                if (!parsing_first_line) {
+                if (parsing_first_line) {
+                    parsing_first_line = 0;
+                } else {
                     size_t consumed_since = advanced - current;
                     if (current_column == 4) {
                         int number = yarn__parse_linenumber(begin, current, consumed_since, current_line);
@@ -2187,10 +2190,11 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                     line.file = 0;
                     line.node = 0;
                     line.line_number = 0;
-                } else {
-                    parsing_first_line = 0;
                 }
 
+                if (begin[advanced] == '\r' && begin[advanced + 1] == '\n') {
+                    advanced++; /* skip carriage return */
+                }
                 current_line += 1;
                 current_column = 0;
                 advanced++; /* skip line break */

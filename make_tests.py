@@ -4,7 +4,6 @@ import os
 
 TEST_FILE_FOLDER = "./tests/yarn-files/"
 TEST_C_FOLDER    = "./tests/yarn-c"
-filepath = []
 
 def create_tests():
     print("[TESTER] Making test files.")
@@ -43,13 +42,18 @@ def actually_do_tests():
     print("[TESTER] Actually trying to perform tests.")
     executable_path = "dist/main.exe" if os.name == "nt" else "dist/compiled"
 
-    for (dirname, filename) in filepath:
-        print("[TESTER] Trying to do test for file: %s" % (filename))
-        yarnc_path = "%s/%s.yarnc" % (dirname, filename)
-        csv_path = "%s/%s.csv" % (dirname, filename)
-        output = subprocess.run([executable_path, yarnc_path, csv_path])
+    maindir = pathlib.Path(TEST_C_FOLDER)
+    for dirname in maindir.glob("*"):
+        print("checking %s"  % dirname.name)
+        filepath = maindir / dirname.name / ("%s.yarnc" % dirname.name)
+        csvpath  = maindir / dirname.name / ("%s.csv" % dirname.name)
 
+        if filepath.exists() and csvpath.exists():
+            print("[TESTER] Trying to do test for file: %s" % (dirname.name))
+            output = subprocess.run([executable_path, str(filepath), str(csvpath)])
+        else:
+            print("%s and %s does not exist" % (filepath, csvpath))
 
 print("[TESTER] Commencing tests...")
-create_tests()
+# create_tests()
 actually_do_tests()
