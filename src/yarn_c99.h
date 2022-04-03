@@ -1206,7 +1206,7 @@ int yarn__kvmap_iternext(yarn_kvmap *map, char **key, void *value, size_t elemen
     if (at < map->capacity) {
         assert(header);
         if (key)  *key = header->key;
-        if (value) memcpy(value, (void*)(header+1), element_size);
+        if (value && element_size != 0) memcpy(value, (void*)(header+1), element_size);
         return at + 1;
     }
 

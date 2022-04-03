@@ -15,11 +15,11 @@ typedef struct {
     for_kvmap value;
 } for_kvmap_entry;
 
-struct  Map_HasEntry {
+struct Populated_KVMap {
     yarn_kvmap kvmap;
 };
 
-const for_kvmap_entry premade_for_fixture[] = {
+static for_kvmap_entry premade_for_fixture[] = {
     { "hello", { 1, 2, 3 } },
     { "world", { 4, 5, 6 } },
     { "foo", { 10, 20, 30 } },
@@ -34,24 +34,27 @@ const for_kvmap_entry premade_for_fixture[] = {
     { "ivory coast", { 140, 240, 340 } },
 };
 
-UTEST_F_SETUP(Map_HasEntry) {
+UTEST_F_SETUP(Populated_KVMap) {
     utest_fixture->kvmap = yarn_kvcreate(for_kvmap, 4);
 
     for (int i = 0; i < YARN_LEN(premade_for_fixture); ++i) {
-        yarn_kvpush(&utest_fixture->kvmap, (const char*)premade_for_fixture[i].key, premade_for_fixture[i].value);
+        yarn_kvpush(&utest_fixture->kvmap, (const char *)premade_for_fixture[i].key, premade_for_fixture[i].value);
     }
 
     EXPECT_EQ(utest_fixture->kvmap.used, YARN_LEN(premade_for_fixture));
 
-    EXPECT_EQ(YARN_LEN(premade_for_fixture), 12);  /* this line should affect the capacity check below; kvmap began with 4 and inserted 12 elements, capacity doubles each time so it should be 16 or 32 */
+     /* this line should affect the capacity check directly below;
+      * kvmap began with 4 and inserted 12 elements, capacity doubles each time when it hits threshold of (used > cap * 0.7)
+      * so it should be 16 or 32 */
+    EXPECT_EQ(YARN_LEN(premade_for_fixture), 12);
     EXPECT_GE(utest_fixture->kvmap.capacity, 16);
 }
 
-UTEST_F_TEARDOWN(Map_HasEntry) {
+UTEST_F_TEARDOWN(Populated_KVMap) {
     yarn_kvdestroy(&utest_fixture->kvmap);
 }
 
-UTEST_F(Map_HasEntry, basic_operation) {
+UTEST_F(Populated_KVMap, basic_operation) {
     size_t used = utest_fixture->kvmap.used;
 
     for_kvmap value = {0, 1, 2};
@@ -74,7 +77,7 @@ UTEST_F(Map_HasEntry, basic_operation) {
     EXPECT_EQ(exists_or_negativeone, -1);
 }
 
-UTEST_F(Map_HasEntry, should_be_able_to_iterate) { char *key;
+UTEST_F(Populated_KVMap, should_be_able_to_iterate) { char *key;
     for_kvmap value = {0};
     int count = 0;
 
@@ -143,19 +146,19 @@ UTEST(kvmap, normal_usage) {
     yarn_kvdestroy(&kvmap);
 }
 
-struct TableF {
+struct CSVParsing {
     yarn_string_table *t;
 };
 
-UTEST_F_SETUP(TableF) {
+UTEST_F_SETUP(CSVParsing) {
     utest_fixture->t = yarn_create_string_table();
 }
 
-UTEST_F_TEARDOWN(TableF) {
+UTEST_F_TEARDOWN(CSVParsing) {
     yarn_destroy_string_table(utest_fixture->t);
 }
 
-UTEST_F(TableF, success_normal) {
+UTEST_F(CSVParsing, success_normal) {
     const char safe[] = "id,text,file,node,lineNumber\nline:a,\"hey hello there\",testfile,Start,0\r\nline:b,\"hey hello there\",testfile,Start,11";
     const char safe2[] = "id,text,file,node,lineNumber\nline:a,\"hey hello there\",testfile,Start,0\nline:b,\"hey hello there\",testfile,Start,2147483647\n"; /* barely non-overflow, with linebreak at the end */
     ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe, sizeof(safe)));
@@ -165,28 +168,39 @@ UTEST_F(TableF, success_normal) {
     EXPECT_EQ(utest_fixture->t->table.used, 2); /* Overlapping ID. should be overwriting */
 }
 
-UTEST_F(TableF, success_with_crlf) {
+UTEST_F(CSVParsing, success_with_crlf) {
     const char safe[] = "id,text,file,node,lineNumber\r\nline:a,\"hey hello there\",testfile,Start,2147483647";
     const char safe2[] = "id,text,file,node,lineNumber\r\nline:a,\"hey hello there\",testfile,Start,2147483647\r\n";
     ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe, sizeof(safe)));
     ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe2, sizeof(safe2)));
 }
 
-UTEST_F(TableF, success_empty_table) {
+UTEST_F(CSVParsing, success_empty_table) {
     const char safe[] = "id,text,file,node,lineNumber";
     const char safe2[] = "id,text,file,node,lineNumber\n";
     ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe, sizeof(safe)));
     ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)safe2, sizeof(safe2)));
 }
 
-UTEST_F(TableF, should_completely_overflow) {
+UTEST_F(CSVParsing, should_completely_overflow) {
     const char overflower[] = "id,text,file,node,lineNumber\nline:a,\"hey hello there\",testfile,Start,1000000000000000000000000000000";
     ASSERT_FALSE(yarn__load_string_table(utest_fixture->t, (char*)overflower, sizeof(overflower)));
 }
 
-UTEST_F(TableF, should_BARELY_overflow) {
+UTEST_F(CSVParsing, should_BARELY_overflow) {
     const char overflower[] = "id,text,file,node,lineNumber\nline:a,\"hey hello there\",testfile,Start,2147483648"; /* INT_MAX+1 */
     ASSERT_FALSE(yarn__load_string_table(utest_fixture->t, (char*)overflower, sizeof(overflower)));
 }
+
+UTEST_F(CSVParsing, removing_double_quotation) {
+    const char double_quotes[] = "id,text,file,node,lineNumber\nline:a,\"hey \"\"hello\"\" there\",testfile,Start,10";
+    ASSERT_TRUE(yarn__load_string_table(utest_fixture->t, (char*)double_quotes, sizeof(double_quotes)));
+
+    yarn_parsed_entry parsed = {0};
+    EXPECT_NE(yarn_kvget(&utest_fixture->t->table, "line:a", &parsed), -1);
+    EXPECT_STREQ(parsed.text, "hey \"hello\" there");
+    EXPECT_EQ(strlen(parsed.text), sizeof("hey \"hello\" there") - 1);
+}
+
 
 UTEST_MAIN();
