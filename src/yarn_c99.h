@@ -810,8 +810,8 @@ char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line
         }
     } else {
         /* TODO: @logging */
-        printf("line id %s does not exist.\n", line->id);
-        printf("NOTE: the line will still be consumed\n");
+        printf("error: line id %s does not exist in table.\n", line->id);
+        printf("error: the line will still be consumed\n");
     }
 
     /* no matter how actual providing goes, still consume the base line. */
@@ -2212,7 +2212,6 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
                     assert(column_count < YARN_LEN(expect_column));
                     const yarn__expect_csv_column *expect = &expect_column[column_count];
 
-                    /* TODO: @logging handle more gracefully. */
                     size_t consumed_since = advanced - current;
                     if (expect->size != consumed_since) {
                         printf("error(line %d): expect size difference: %zu to %zu\n", current_line, expect->size, consumed_since);
