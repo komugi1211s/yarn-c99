@@ -59,7 +59,6 @@ info:
  *   - (@data-structure) performing slow lookups that can be solved with appropriate data structure.
  *
  * - assert crusade (some error should be reported to game, instead of crashing outright)
- *   - (@logging) logging function should report this.
  *
  * - make feeling closer to C# (simulate garbage-collected string with allocator?)
  *   - (@deviation) have to consult to other users, or weird design decisions.
@@ -252,6 +251,32 @@ typedef struct {
 /* macro for push/pop/create/destroy is inside implementation block below. */
 
 /* =============================================
+ * Yarn allocator:
+ *   Arena based allocator that has the same memory lifetime.
+ *   frees everything at once.
+ *   every pointer that allocates off of this will never be invalidated.
+ *
+ *   internally it allocates the chain of allocator chunk to achieve parsistence of memory.
+ *   with (used = 0, caps = 0, buffer = 0) being the sentinel node.
+ *
+ *   every allocator chunk will be pushed inside the doubly linked list.
+ */
+
+typedef struct {
+    size_t used;
+    size_t capacity;
+    char   *buffer;
+
+    yarn_allocator_chunk *prev;
+    yarn_allocator_chunk *next;
+} yarn_allocator_chunk;
+
+typedef struct {
+    yarn_allocator_chunk *sentinel;
+    size_t next_caps;
+} yarn_allocator;
+
+/* =============================================
  * Yarn line:
  * Same as C# implementation.
  * 
@@ -381,6 +406,8 @@ struct yarn_dialogue {
     struct Yarn__Program *program;
     yarn_string_table  *strings;
     yarn_exec_state     execution_state;
+    yarn_allocator      dialogue_allocator;
+
 
     /* Delegates. */
     yarn_logger_func *log_debug;
@@ -418,6 +445,9 @@ YARN_C99_DEF void                  yarn_destroy_default_storage(yarn_variable_st
 
 YARN_C99_DEF yarn_string_table *yarn_create_string_table(void);
 YARN_C99_DEF void               yarn_destroy_string_table(yarn_string_table *table);
+
+YARN_C99_DEF yarn_allocator     yarn_create_allocator(size_t initial_caps);
+YARN_C99_DEF void               yarn_destroy_allocator(yarn_allocator *allocator);
 
 /* Loading functions. */
 YARN_C99_DEF int yarn_load_program(yarn_dialogue *dialogue, void *program_buffer, size_t program_length);
@@ -474,6 +504,10 @@ YARN_C99_DEF void  yarn_destroy_displayable_line(char *line);
 YARN_C99_DEF yarn_function_entry  yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
 YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *functions);
 
+/* allocator related stuff. */
+YARN_C99_DEF void *yarn_allocate(yarn_allocator *allocator, size_t size);
+YARN_C99_DEF void  yarn_clear_allocator(yarn_allocator *allocator);
+
 /*
  * ====================================================
  * Internals
@@ -490,6 +524,9 @@ YARN_C99_DEF uint32_t yarn__hashstr(const char *str, size_t strlength);
 
 /* strndup implementation that uses YARN_MALLOC. */
 YARN_C99_DEF char *yarn__strndup(const char *original, size_t length);
+
+/* strndup implementation that uses yarn_allocator. */
+YARN_C99_DEF char *yarn__strndup_alloc(yarn_allocator *allocator, const char *original, size_t length);
 
 /* tries to extend dynamic array. */
 YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps);
@@ -809,7 +846,6 @@ char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line
             result = yarn__strndup(result, strlen(result));
         }
     } else {
-        /* TODO: @logging */
         printf("error: line id %s does not exist in table.\n", line->id);
         printf("error: the line will still be consumed\n");
     }
@@ -1005,6 +1041,59 @@ void yarn_destroy_string_table(yarn_string_table *table) {
 
     yarn_kvdestroy(&table->table);
     YARN_FREE(table);
+}
+
+yarn_allocator yarn_create_allocator(size_t initial_caps) {
+    if ((initial_caps & 15) != 0) {
+        /* align to 16 */
+        initial_caps += 16 - (initial_caps & 15);
+    }
+
+    yarn_allocator allocator = {0};
+    allocator.sentinel = YARN_MALLOC(sizeof(yarn_allocator_chunk));
+
+    allocator.sentinel->used = 0;
+    allocator.sentinel->capacity = 0;
+    allocator.sentinel->buffer = 0;
+
+    yarn_allocator_chunk *first_chunk = YARN_MALLOC(sizeof(yarn_allocator_chunk));
+    first_chunk->buffer = YARN_MALLOC(initial_caps);
+    first_chunk->capacity = initial_caps;
+    first_chunk->used     = 0;
+
+    first_chunk->prev     = allocator.sentinel;
+    first_chunk->next     = allocator.sentinel;
+    allocator.sentinel->next = first_chunk;
+    allocator.sentinel->prev = first_chunk;
+
+    allocator.next_caps = initial_caps * 2;
+}
+
+void yarn_destroy_allocator(yarn_allocator *allocator) {
+    yarn_allocator_chunk *current = allocator->sentinel->next;
+
+    while(current->buffer != 0) {
+        yarn_allocator_chunk *next = current->next;
+        YARN_FREE(current->buffer);
+        YARN_FREE(current);
+
+        current = next;
+    }
+
+    YARN_FREE(allocator->sentinel);
+}
+
+void *yarn_allocate(yarn_allocator *allocator, size_t size) {
+
+    yarn_allocator_chunk *current = allocator->sentinel->next;
+
+    while(current->buffer != 0) {
+        if ((current->used + size) > current->capacity) {
+        }
+    }
+}
+
+void yarn_clear_allocator(yarn_allocator *allocator) {
 }
 
 int yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *loading_functions) {
