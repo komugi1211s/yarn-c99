@@ -8,5 +8,5 @@ else
 endif
 
 test:
-	$(CC) test.c ../src/yarn_spinner.pb-c.c ../src/protobuf-c.c
-	$@
+	$(CC) -o $@ test.c ../src/yarn_spinner.pb-c.c ../src/protobuf-c.c
+	./$@

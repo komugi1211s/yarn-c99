@@ -202,5 +202,36 @@ UTEST_F(CSVParsing, removing_double_quotation) {
     EXPECT_EQ(strlen(parsed.text), sizeof("hey \"hello\" there") - 1);
 }
 
+struct Allocator {
+    yarn_allocator t;
+};
+
+UTEST_F_SETUP(Allocator) {
+    utest_fixture->t = yarn_create_allocator(32 * 1024);
+}
+
+UTEST_F_TEARDOWN(Allocator) {
+    yarn_destroy_allocator(utest_fixture->t);
+}
+
+UTEST_F(Allocator, simple_allocation) {
+    {
+        void *mem = yarn_allocate(&utest_fixture->t, 128);
+        EXPECT_TRUE(mem);
+        EXPECT_EQ(utest_fixture->t.sentinel->next->used, 128);
+    }
+
+    {
+        void *mem = yarn_allocate(&utest_fixture->t, 128);
+        EXPECT_TRUE(mem);
+        EXPECT_EQ(utest_fixture->t.sentinel->next->used, 256);
+    }
+
+    { /* Be aligned */
+        void *mem = yarn_allocate(&utest_fixture->t, 10);
+        EXPECT_TRUE(mem);
+        EXPECT_EQ(utest_fixture->t.sentinel->next->used, (256 + 16));
+    }
+}
 
 UTEST_MAIN();
