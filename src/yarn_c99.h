@@ -1120,6 +1120,10 @@ void *yarn_allocate(yarn_allocator *allocator, size_t size) {
 
     size_t next_cap = allocator->next_caps;
     allocator->next_caps *= 2;
+    while(next_cap < size) {
+        next_cap = allocator->next_caps;
+        allocator->next_caps *= 2;
+    }
 
     yarn_allocator_chunk *chunk = YARN_MALLOC(sizeof(yarn_allocator_chunk));
     chunk->used = 0;

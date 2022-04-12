@@ -234,4 +234,20 @@ UTEST_F(Allocator, simple_allocation) {
     }
 }
 
+UTEST_F(Allocator, another_chunk) {
+    {
+        void *mem = yarn_allocate(&utest_fixture->t, 31 * 1024);
+        EXPECT_TRUE(mem);
+        EXPECT_EQ(utest_fixture->t.sentinel->next->used, 31 * 1024);
+    }
+
+    {
+        void *mem = yarn_allocate(&utest_fixture->t, 16 * 1024);
+        EXPECT_TRUE(mem);
+        EXPECT_EQ(utest_fixture->t.sentinel->next->used, 31 * 1024);
+        EXPECT_EQ(utest_fixture->t.sentinel->prev->used, 16 * 1024); /* new chunk! */
+        EXPECT_EQ(utest_fixture->t.next_caps, 128 * 1024); /* new chunk has 64 kb, therefore next one is 128kb */
+    }
+}
+
 UTEST_MAIN();
