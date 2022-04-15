@@ -472,15 +472,14 @@ YARN_C99_DEF float yarn_value_as_float(yarn_value value);
 
 /* formatting value.
  * must be freed with destroy_formatted_string. */
-YARN_C99_DEF char *yarn_format_value(yarn_value value);
-YARN_C99_DEF void  yarn_destroy_formatted_string(char *formatted_string);
+YARN_C99_DEF char *yarn_tostring(yarn_value value);
+YARN_C99_DEF void  yarn_free_tostring(char *string);
 
 /* check if yarn vm is currently running. */
 YARN_C99_DEF int yarn_is_active(yarn_dialogue *dialogue);
 
 /* spin up VM, until it hits operation that needs to be handled. */
 YARN_C99_DEF int yarn_continue(yarn_dialogue *dialogue);
-
 
 YARN_C99_DEF int yarn_set_node(yarn_dialogue *dialogue, char *node_name); /* sets current node. */
 YARN_C99_DEF int yarn_select_option(yarn_dialogue *dialogue, int select_option); /* selects option, if option is active. */
@@ -530,6 +529,9 @@ YARN_C99_DEF char *yarn__strndup(const char *original, size_t length);
 
 /* strndup implementation that uses yarn_allocator. */
 YARN_C99_DEF char *yarn__strndup_alloc(yarn_allocator *allocator, const char *original, size_t length);
+
+/* yarn_tostring implementation that uses yarn_allocator. */
+YARN_C99_DEF char *yarn__tostring_alloc(yarn_allocator *allocator, yarn_value value);
 
 /* Allocates new chunk with given size. */
 YARN_C99_DEF yarn_allocator_chunk *yarn__create_new_chunk(size_t size);
@@ -745,37 +747,38 @@ int yarn_value_as_bool(yarn_value value) {
     return 0;
 }
 
-char *yarn_format_value(yarn_value value) {
+char *yarn_tostring(yarn_value value) {
     switch(value.type) {
-        case YARN_VALUE_BOOL:
-            return (char *)((!!value.values.v_bool) ? "true" : "false"); /* TODO: @danger literal to char conversion */
-
         case YARN_VALUE_STRING:
             return yarn__strndup(value.values.v_string, strlen(value.values.v_string));
 
-        case YARN_VALUE_FLOAT: /* the tricky one... */
+        case YARN_VALUE_FLOAT:
         {
             char temp[1024] = {0};
-            int result_length = snprintf(temp, sizeof(temp)-1, "%f", value.values.v_float);
+            int _length = snprintf(temp, sizeof(temp)-1, "%f", value.values.v_float);
 
-            return yarn__strndup(temp, result_length);
+            assert(_length > 0);
+            size_t length = _length;
+
+            return yarn__strndup(temp, length);
+        } break;
+
+        case YARN_VALUE_BOOL:
+        {
+            const char *base = (!!value.values.v_bool) ? "true" : "false";
+            size_t length = strlen(base);
+
+            return yarn__strndup(base, length);
         } break;
 
         case YARN_VALUE_NONE:
         default:
-            return (char*)"None"; /* TODO: @danger literal to char conversion */
+            return yarn__strndup("None", sizeof("None")-1);
     }
 }
 
-void  yarn_destroy_formatted_string(char *formatted_string) {
-    size_t length = strlen(formatted_string);
-
-    /* TODO: @danger  */
-    if (length == 4 && strncmp(formatted_string, "true",  length) == 0) return;
-    if (length == 5 && strncmp(formatted_string, "false", length) == 0) return;
-    if (length == 4 && strncmp(formatted_string, "None",  length) == 0) return;
-
-    YARN_FREE(formatted_string);
+void  yarn_free_tostring(char *string) {
+    YARN_FREE(string);
 }
 
 yarn_value yarn_pop_value(yarn_dialogue *dialogue) {
@@ -857,20 +860,6 @@ char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line
         printf("error: the line will still be consumed\n");
     }
 
-    /* no matter how actual providing goes, still consume the base line. */
-    /* TODO: FIXME: @allocator
-     * this is confusing and certainly will be unexpected for users.
-     * remove it and find some other way to keep memory from leaking. */
-    if (line->n_substitutions > 0) {
-        for (int i = 0; i < line->n_substitutions; ++i) {
-            yarn_destroy_formatted_string(line->substitutions[i]);
-        }
-        YARN_FREE(line->substitutions);
-
-        /* Consume substitutions. */
-        line->n_substitutions = 0;
-        line->substitutions   = 0;
-    }
     return result;
 }
 
@@ -939,19 +928,6 @@ int yarn_select_option(yarn_dialogue *dialogue, int select_option) {
     yarn_option selected = dialogue->current_options.entries[select_option];
     yarn_push_value(dialogue, yarn_string(selected.destination_node));
 
-    for (int i = 0; i < dialogue->current_options.used; ++i) {
-        yarn_option opt = dialogue->current_options.entries[i];
-        if (opt.line.n_substitutions > 0) {
-            for (int i = 0; i < opt.line.n_substitutions; ++i) {
-                yarn_destroy_formatted_string(opt.line.substitutions[i]);
-            }
-            YARN_FREE(opt.line.substitutions);
-
-            opt.line.n_substitutions = 0;
-            opt.line.substitutions   = 0;
-        }
-    }
-
     dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
     dialogue->current_options.used = 0;
     return 1;
@@ -963,6 +939,7 @@ yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
     dialogue->program = 0;
     dialogue->strings = 0;
     dialogue->storage = storage;
+    dialogue->dialogue_allocator = yarn_create_allocator(16 * 1024); /* 16 kb should be enough for initial allocator */
 
     dialogue->current_node        = 0;
     dialogue->current_instruction = 0;
@@ -970,7 +947,6 @@ yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
 
     dialogue->stack_ptr = 0;
     memset(dialogue->stack, 0, sizeof(yarn_value) * YARN_STACK_CAPACITY);
-
 
     dialogue->log_debug                 = &yarn__stub_log_debug;
     dialogue->log_error                 = &yarn__stub_log_error;
@@ -993,17 +969,7 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
     if (dialogue->program)
         yarn__program__free_unpacked(dialogue->program, 0); /* TODO: @allocator */
 
-    /* TODO: @allocator */
-    for (size_t i = 0; i < dialogue->current_options.used; ++i) {
-        yarn_option opt = dialogue->current_options.entries[i];
-        if (opt.line.n_substitutions > 0) {
-            for (int i = 0; i < opt.line.n_substitutions; ++i) {
-                yarn_destroy_formatted_string(opt.line.substitutions[i]);
-            }
-            YARN_FREE(opt.line.substitutions);
-        }
-    }
-
+    yarn_destroy_allocator(dialogue->dialogue_allocator);
     yarn_kvdestroy(&dialogue->library);
     YARN_FREE(dialogue->current_options.entries);
     YARN_FREE(dialogue);
@@ -1553,6 +1519,44 @@ char *yarn__strndup(const char *cloning, size_t length) {
     return result;
 }
 
+
+char *yarn__strndup_alloc(yarn_allocator *allocator, const char *cloning, size_t length) {
+    char *result = (char *)yarn_allocate(allocator, length + 1);
+    memset(result, 0, length + 1);
+
+    for (size_t i = 0; i < length; ++i) {
+        result[i] = cloning[i];
+    }
+
+    return result;
+}
+
+char *yarn__tostring_alloc(yarn_allocator *allocator, yarn_value value) {
+    /* Since allocator never allow individual free, I just return const string here and there. */
+    switch(value.type) {
+        case YARN_VALUE_STRING:
+            return yarn__strndup_alloc(allocator, value.values.v_string, strlen(value.values.v_string));
+
+        case YARN_VALUE_FLOAT:
+        {
+            char temp[1024] = {0};
+            int _length = snprintf(temp, sizeof(temp)-1, "%f", value.values.v_float);
+            assert(_length > 0);
+            size_t length = _length;
+            return yarn__strndup_alloc(allocator, temp, length);
+        } break;
+
+        case YARN_VALUE_BOOL:
+        {
+            return (char *)((!!value.values.v_bool) ? "true" : "false");
+        } break;
+
+        case YARN_VALUE_NONE:
+        default:
+            return (char *)"None";
+    }
+}
+
 /* ===========================================
  * Dynamic Array based default storage functions.
  */
@@ -1787,6 +1791,9 @@ void yarn__reset_state(yarn_dialogue *dialogue) {
     dialogue->stack_ptr = 0;
     dialogue->current_instruction = 0;
     dialogue->current_node = 0;
+
+    /* TODO: is it really safe to reset the allocator here? */
+    yarn_clear_allocator(&dialogue->dialogue_allocator);
 }
 
 void yarn__logdebug(yarn_dialogue *dialogue, const char *fmt, ...) {
@@ -1937,22 +1944,16 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                 /* NOTE: have to check if expr_count is not 0,
                  * otherwise tries to do malloc(0) therefore implementation-defined */
                 if (expr_count > 0) {
-                    /* TODO: @allocator stack allocator would work wonderfully here */
-                    char **substitutions = (char **)YARN_MALLOC(sizeof(char *) * expr_count);
+                    char **substitutions = (char **)yarn_allocate(&dialogue->dialogue_allocator, sizeof(char *) * expr_count);
                     n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
                         yarn_value value = yarn_pop_value(dialogue);
-                        char *subst = yarn_format_value(value);
+                        char *subst = yarn__tostring_alloc(&dialogue->dialogue_allocator, value);
                         substitutions[i] = subst;
                     }
 
                     command_text = yarn__substitute_string(command_text, substitutions, n_substitutions);
-
-                    for (int i = 0; i < n_substitutions; ++i) {
-                        yarn_destroy_formatted_string(substitutions[i]);
-                    }
-                    YARN_FREE(substitutions);
                 }
             }
 
@@ -1963,7 +1964,7 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                 dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
             }
 
-            if (n_substitutions > 0) YARN_FREE(command_text);
+            if (n_substitutions > 0) YARN_FREE(command_text); /* Command text allocation cannot be ignored */
         } break;
 
         case YARN__INSTRUCTION__OP_CODE__JUMP:
@@ -2023,12 +2024,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore implementation defined */
                 if (expr_count > 0) {
                     /* TODO: @allocator stack allocator would work wonderfully here */
-                    option.line.substitutions = (char **)YARN_MALLOC(sizeof(char *) * expr_count);
+                    option.line.substitutions = (char **)yarn_allocate(&dialogue->dialogue_allocator, sizeof(char *) * expr_count);
                     option.line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
                         yarn_value value = yarn_pop_value(dialogue);
-                        char *subst = yarn_format_value(value);
+                        char *subst = yarn__tostring_alloc(&dialogue->dialogue_allocator, value);
                         option.line.substitutions[i] = subst;
                     }
                 }
@@ -2083,13 +2084,12 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
                  * otherwise tries to do malloc(0) therefore implementation defined */
 
                 if (expr_count > 0) {
-                    /* TODO: @allocator stack allocator would work wonderfully here */
-                    line.substitutions = (char **)YARN_MALLOC(sizeof(char *) * expr_count);
+                    line.substitutions = (char **)yarn_allocate(&dialogue->dialogue_allocator, sizeof(char *) * expr_count);
                     line.n_substitutions = expr_count;
 
                     for (int i = expr_count - 1; i >= 0; --i) {
                         yarn_value value = yarn_pop_value(dialogue);
-                        char *subst = yarn_format_value(value);
+                        char *subst = yarn__tostring_alloc(&dialogue->dialogue_allocator, value);
                         line.substitutions[i] = subst;
                     }
                 }
@@ -2100,18 +2100,6 @@ void yarn__run_instruction(yarn_dialogue *dialogue, Yarn__Instruction *inst) {
 
             if (dialogue->execution_state == YARN_EXEC_DELIVERING_CONTENT) {
                 dialogue->execution_state = YARN_EXEC_WAITING_FOR_CONTINUE;
-            }
-
-            /* line substitution is left without consumed. free now. */
-            if (line.n_substitutions > 0) {
-                for (int i = 0; i < line.n_substitutions; ++i) {
-                    YARN_FREE(line.substitutions[i]);
-                }
-                YARN_FREE(line.substitutions);
-
-                /* Consume substitutions. */
-                line.n_substitutions = 0;
-                line.substitutions   = 0;
             }
         } break;
 

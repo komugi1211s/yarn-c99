@@ -1,9 +1,6 @@
 #include <raylib.h>
 
-#include "protobuf-c.c"
 #include "yarn_spinner.pb-c.h"
-#include "yarn_spinner.pb-c.c"
-
 #define YARN_C99_IMPLEMENTATION
 #include "yarn_c99.h"
 
@@ -332,7 +329,5 @@ int main(int argc, char **argv) {
     UnloadFont(fontcp);
     UnloadFont(fontnormal);
     CloseWindow();
-
-    stb_leakcheck_dumpmem();
     return 0;
 }

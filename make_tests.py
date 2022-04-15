@@ -50,7 +50,7 @@ def actually_do_tests():
 
         if filepath.exists() and csvpath.exists():
             print("[TESTER] Trying to do test for file: %s" % (dirname.name))
-            output = subprocess.run([executable_path, str(filepath), str(csvpath)])
+            output = subprocess.run(["valgrind", executable_path, str(filepath), str(csvpath)])
         else:
             print("%s and %s does not exist" % (filepath, csvpath))
 
