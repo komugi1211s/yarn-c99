@@ -9,7 +9,7 @@ def create_tests():
     print("[TESTER] Making test files.")
     files = pathlib.Path(TEST_FILE_FOLDER)
 
-    ysc_path = "dist/ysc.exe" if os.name == "nt" else "dist/ysc"
+    ysc_path = "dist/ysc.exe" if os.name == "nt" else "dist/ysc/ysc"
 
     if not pathlib.Path(TEST_C_FOLDER).exists():
         pathlib.Path(TEST_C_FOLDER).mkdir()
@@ -24,7 +24,6 @@ def create_tests():
         path = pathlib.Path(output_dir)
         if path.exists():
             print("[TESTER]  folder %s already exists. skipping now." % path.name)
-            filepath.append((output_dir, output_name))
             continue
         else:
             path.mkdir()
@@ -35,7 +34,6 @@ def create_tests():
             path.rmdir()
 
         else:
-            filepath.append((output_dir, output_name))
             print("  Folder made for %s" % output_name)
 
 def actually_do_tests():
@@ -55,5 +53,5 @@ def actually_do_tests():
             print("%s and %s does not exist" % (filepath, csvpath))
 
 print("[TESTER] Commencing tests...")
-# create_tests()
+create_tests()
 actually_do_tests()

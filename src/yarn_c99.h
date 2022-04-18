@@ -102,7 +102,7 @@ typedef struct yarn_variable_storage yarn_variable_storage;
  *     yarn_destroy_default_storage(storage);
  *
  *   default storage plays the same role as InMemoryVariableStorage in C# implementation.
- *   it uses hashmap underneath.
+ *   it uses hashmap and allocator underneath.
  *
  * alternatively, you can create your own storage:
  *   1. make functions, like this
@@ -278,6 +278,18 @@ typedef struct {
     yarn_allocator_chunk *sentinel;
     size_t next_caps;
 } yarn_allocator;
+
+/* =============================================
+ * Default Variable Storage:
+ * MOSTLY same as C# implementation.
+ *
+ * allocator is for keeping yarn_string.
+ */
+
+typedef struct {
+    yarn_allocator allocator;
+    yarn_kvmap     kvmap;
+} yarn_default_storage;
 
 /* =============================================
  * Yarn line:
@@ -495,9 +507,7 @@ YARN_C99_DEF yarn_value yarn_load_variable(yarn_dialogue *dialogue, char *var_na
 YARN_C99_DEF void       yarn_store_variable(yarn_dialogue *dialogue, char *var_name, yarn_value value);
 
 /* loads line, and performs substitution.
- * NOTE: @allocator
- *    1. convert function consumes line. it is unsafe to access inner data after you've called this function.
- *    2. returned value must be freed with yarn_destroy_displayable_line.
+ * returned value must be freed with yarn_destroy_displayable_line.
  * */
 YARN_C99_DEF char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line);
 YARN_C99_DEF void  yarn_destroy_displayable_line(char *line);
@@ -939,7 +949,7 @@ yarn_dialogue *yarn_create_dialogue(yarn_variable_storage storage) {
     dialogue->program = 0;
     dialogue->strings = 0;
     dialogue->storage = storage;
-    dialogue->dialogue_allocator = yarn_create_allocator(16 * 1024); /* 16 kb should be enough for initial allocator */
+    dialogue->dialogue_allocator = yarn_create_allocator(4 * 1024); /* 4 kb should be enough for initial allocator. */
 
     dialogue->current_node        = 0;
     dialogue->current_instruction = 0;
@@ -976,13 +986,13 @@ void yarn_destroy_dialogue(yarn_dialogue *dialogue) {
 }
 
 yarn_variable_storage yarn_create_default_storage() {
-    yarn_kvmap kvmap = yarn_kvcreate(yarn_value, 64);
-    yarn_kvmap *m = (yarn_kvmap *)YARN_MALLOC(sizeof(yarn_kvmap));
+    yarn_default_storage *str = (yarn_default_storage *)YARN_MALLOC(sizeof(yarn_default_storage));
 
-    *m = kvmap;
+    str->kvmap     = yarn_kvcreate(yarn_value, 64);
+    str->allocator = yarn_create_allocator(2 * 1024); /* 2 kb */
 
     yarn_variable_storage storage = {0};
-    storage.data = m;
+    storage.data = (void *)str;
     storage.load = &yarn__load_from_default_storage;
     storage.save = &yarn__save_into_default_storage;
 
@@ -990,9 +1000,12 @@ yarn_variable_storage yarn_create_default_storage() {
 }
 
 void yarn_destroy_default_storage(yarn_variable_storage storage) {
-    yarn_kvmap *kvmap = (yarn_kvmap *)storage.data;
-    yarn_kvdestroy(kvmap);
-    YARN_FREE(storage.data);
+    yarn_default_storage *str = (yarn_default_storage *)storage.data;
+
+    yarn_kvdestroy(&str->kvmap);
+    yarn_destroy_allocator(str->allocator);
+
+    YARN_FREE(str);
 }
 
 yarn_string_table *yarn_create_string_table() {
@@ -1562,14 +1575,24 @@ char *yarn__tostring_alloc(yarn_allocator *allocator, yarn_value value) {
  */
 
 yarn_value yarn__load_from_default_storage(void *istorage, char *var_name) {
+    yarn_default_storage *str = (yarn_default_storage*)istorage;
+
     yarn_value value = yarn_none();
-    int exists = yarn_kvget((yarn_kvmap*)istorage, var_name, &value);
+    int exists = yarn_kvget(&str->kvmap, var_name, &value);
 
     return value;
 }
 
 void yarn__save_into_default_storage(void *istorage, char *var_name, yarn_value value) {
-    yarn_kvpush((yarn_kvmap*)istorage, var_name, value);
+    yarn_default_storage *str = (yarn_default_storage*)istorage;
+
+    /* Have to keep string alive within storage separately.
+     * this string could be inside yarn_dialogue allocator which will get reset once dialogue is over. */
+    if (value.type == YARN_VALUE_STRING) {
+        value.values.v_string = yarn__strndup_alloc(&str->allocator, value.values.v_string, strlen(value.values.v_string));
+    }
+
+    yarn_kvpush(&str->kvmap, var_name, value);
 }
 
 /* ===========================================
@@ -1665,16 +1688,6 @@ yarn_value yarn__bool_eq(yarn_dialogue *dialogue) {
     return yarn_bool(left == right);
 }
 
-yarn_value yarn__visited(yarn_dialogue *dialogue) {
-    char *node_name = yarn_value_as_string(yarn_pop_value(dialogue));
-    return yarn_bool(yarn__get_visited_count(dialogue, node_name) > 0);
-}
-
-yarn_value yarn__visited_count(yarn_dialogue *dialogue) {
-    char *node_name = yarn_value_as_string(yarn_pop_value(dialogue));
-    return yarn_int(yarn__get_visited_count(dialogue, node_name));
-}
-
 yarn_value yarn__bool_not_eq(yarn_dialogue *dialogue) {
     int right = yarn_value_as_bool(yarn_pop_value(dialogue));
     int left  = yarn_value_as_bool(yarn_pop_value(dialogue));
@@ -1708,6 +1721,55 @@ yarn_value yarn__bool_not(yarn_dialogue *dialogue) {
     return yarn_bool(!neg);
 }
 
+yarn_value yarn__string_eq(yarn_dialogue *dialogue) {
+    char *right = yarn_value_as_string(yarn_pop_value(dialogue));
+    char *left  = yarn_value_as_string(yarn_pop_value(dialogue));
+
+    size_t leftl = strlen(left);
+    size_t rightl = strlen(right);
+
+    if (leftl != rightl) return yarn_bool(0);
+    return yarn_bool(strncmp(right, left, leftl) == 0);
+}
+
+yarn_value yarn__string_noteq(yarn_dialogue *dialogue) {
+    char *right = yarn_value_as_string(yarn_pop_value(dialogue));
+    char *left  = yarn_value_as_string(yarn_pop_value(dialogue));
+
+    size_t leftl = strlen(left);
+    size_t rightl = strlen(right);
+
+    if (leftl == rightl) return yarn_bool(0);
+    return yarn_bool(strncmp(right, left, leftl) != 0);
+}
+
+yarn_value yarn__string_concat(yarn_dialogue *dialogue) {
+    char *right = yarn_value_as_string(yarn_pop_value(dialogue));
+    char *left  = yarn_value_as_string(yarn_pop_value(dialogue));
+
+    size_t leftl = strlen(left);
+    size_t rightl = strlen(right);
+
+    size_t total = leftl + rightl + 1; /* for null termination */
+    char *result = (char *)yarn_allocate(&dialogue->dialogue_allocator, total);
+
+    memcpy(result, left, leftl);
+    memcpy((result + leftl), right, rightl);
+    result[leftl + rightl] = 0;
+
+    return yarn_string(result);
+}
+
+yarn_value yarn__visited(yarn_dialogue *dialogue) {
+    char *node_name = yarn_value_as_string(yarn_pop_value(dialogue));
+    return yarn_bool(yarn__get_visited_count(dialogue, node_name) > 0);
+}
+
+yarn_value yarn__visited_count(yarn_dialogue *dialogue) {
+    char *node_name = yarn_value_as_string(yarn_pop_value(dialogue));
+    return yarn_int(yarn__get_visited_count(dialogue, node_name));
+}
+
 yarn_func_reg yarn__standard_libs[] = {
     /* Numbers */
     { "Number.Add",      yarn__number_add,      2 },
@@ -1732,6 +1794,10 @@ yarn_func_reg yarn__standard_libs[] = {
     { "Bool.And",        yarn__bool_and,        2 },
     { "Bool.Or",         yarn__bool_or,         2 },
     { "Bool.Xor",        yarn__bool_xor,        2 },
+
+    { "String.EqualTo",     yarn__string_eq,     2 },
+    { "String.NotEqualTo",  yarn__string_noteq,  2 },
+    { "String.Add",         yarn__string_concat, 2 },
 
     /* Visited stuff */
     { "visited",         yarn__visited,         1 },

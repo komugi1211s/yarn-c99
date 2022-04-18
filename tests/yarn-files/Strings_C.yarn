@@ -1,0 +1,21 @@
+title: Start
+---
+// handling C kind of string operations.
+
+<<set $strA to "StrA">>
+<<set $strB to "StrB">>
+
+<<set $strAB to "StrA" + "StrB">>
+
+<<if $strAB == "StrAStrB">>
+This should be here.
+<<endif>>
+
+<<if $strAB != "StrA StrB">>
+This should be here.
+<<endif>>
+
+<<if $strAB == $strA + $strB>>
+This should be here. Again.
+<<endif>>
+===
