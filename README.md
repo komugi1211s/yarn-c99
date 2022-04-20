@@ -1,9 +1,21 @@
 
 # Yarn c99 runtime (WIP).
 fairly incomplete.
-
 ** currently relies on `protobuf-c` and generated header for `yarn_spinner.proto`. **
 
+## feature:
+ - tiny and lightweight (simply include 1 file to a project, and you're done!)
+ - Load/parse `yarnc` + `csv` file and produce yarn file. (subject to deprecation once the compiler is done.)
+ - register C function to virtual machine, with step similar to lua.
+ - provide `yarn_kvmap`, simple generic hashmap with `char *` as a string.
+ - provide `yarn_allocator`, simple arena allocator with pointer-persistency.
+
+## TODO:
+ - [ ] sensible file structure while keeping it single header.
+ - [ ] `.yarn` file compiler.
+ - [ ] make it independent from `protobuf-c`.
+ - [ ] example for integrating to lua.
+ - [ ] example for integrating to wren.
 
 ## how to use:
 example is in `src/main.c`. there are also `example/simple_raylib_game.c` that relies on `raylib` framework.
