@@ -32,7 +32,7 @@ def recursively_create_dependency_tree(files):
             return
 
         expanding.add(f.name)
-        total_file_line.append("//@@ Rabirabi! merged: {}".format(f.name))
+        total_file_line.append("//@@ Merge! merged: {}".format(f.name))
         total_file_line.append("#ifndef RABIRABI_{}_INCLUDED".format(f.name.split('.')[0]))
         total_file_line.append("#define RABIRABI_{}_INCLUDED".format(f.name.split('.')[0]))
 
