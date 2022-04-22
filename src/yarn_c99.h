@@ -649,13 +649,13 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
   #endif
 #endif
 
-
+#define YARN_UNUSED(n) ((void)(sizeof(n)))
 #define YARN_CONCAT1(a, b) a##b
 #define YARN_CONCAT(a, b) YARN_CONCAT1(a, b)
 #define YARN_LEN(n) (sizeof(n)/(sizeof(0[n])))
 
 #define YARN_STATIC_ASSERT(cond, ident_message) \
-    typedef char YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__))[(cond) ? 1 : -1];
+    typedef char YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__))[(cond) ? 1 : -1]; YARN_CONCAT(yarn_static_assert_line_, YARN_CONCAT(ident_message, __LINE__)) YARN_CONCAT(ver, __LINE__) = {0}; YARN_UNUSED(YARN_CONCAT(ver, __LINE__));\
 
 /*
  * Dynamic array stuff.
@@ -682,9 +682,11 @@ YARN_C99_DEF void       yarn__save_into_default_storage(void *istorage, char *va
 yarn_function_entry yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname) {
     size_t length = strlen(funcname);
     uint32_t hash = yarn__hashstr(funcname, length);
+    YARN_UNUSED(hash);
 
     yarn_function_entry entry = {0};
     int exists = yarn_kvget(&dialogue->library, funcname, &entry);
+    YARN_UNUSED(exists);
 
     return entry;
 }
@@ -850,7 +852,6 @@ int yarn_continue(yarn_dialogue *dialogue) {
 
 /* TODO: subject to cleanup. */
 char *yarn_convert_to_displayable_line(yarn_string_table *table, yarn_line *line) {
-    size_t given_id_length = strlen(line->id);
     char *result = 0;
 
     yarn_parsed_entry entry = {0};
@@ -1492,7 +1493,7 @@ int yarn__kvmap_delete(yarn_kvmap *map, const char *key) {
  * Utilities.
  */
 uint32_t yarn__hashstr(const char *str, size_t length) {
-    (void)sizeof(length); /* UNUSED */
+    YARN_UNUSED(length);
 
     /* DJB2 */
     uint32_t h = 5381;
@@ -1579,6 +1580,7 @@ yarn_value yarn__load_from_default_storage(void *istorage, char *var_name) {
 
     yarn_value value = yarn_none();
     int exists = yarn_kvget(&str->kvmap, var_name, &value);
+    YARN_UNUSED(exists);
 
     return value;
 }
@@ -2505,7 +2507,6 @@ int yarn__load_string_table(yarn_string_table *table, void *string_table_buffer,
         }
     }
 
-done:
     if (string_table_length < current || begin[current] != '\0') { /* (string table length - 1) == position of '\0' */
         printf("error: couldn't parse until the end of the string table. data possibly corrupted\n");
         goto errored;

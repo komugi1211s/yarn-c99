@@ -1,7 +1,11 @@
 #include "yarn_spinner.pb-c.h"
 
+
+#define YARN_PARSER_IMPLEMENTATION
 #define YARN_C99_IMPLEMENTATION
 #include "yarn_c99.h"
+#include "yarn_parser.h"
+
 #include "utest.h"
 
 typedef struct {
@@ -250,4 +254,31 @@ UTEST_F(Allocator, another_chunk) {
     }
 }
 
-UTEST_MAIN();
+struct Test_Parser {
+    yarn_compilation_job *comp;
+};
+
+UTEST_F_SETUP(Test_Parser) {
+    utest_fixture->comp = yarn_create_compilation_job();
+}
+
+UTEST_F_TEARDOWN(Test_Parser) {
+    yarn_destroy_compilation_job(utest_fixture->comp);
+}
+
+UTEST_F(Test_Parser, basic_code) {
+    const char *code = ""
+        "title: Start\n"
+        "---\n"
+        "hello there!\n"
+        "===\n";
+
+    {
+        yarn_add_script_mem(utest_fixture->comp, "DemoCode", code, sizeof(code)-1);
+
+        yarn_program *program = yarn_compile(utest_fixture->comp);
+        EXPECT_TRUE(program->success);
+    }
+}
+
+UTEST_MAIN()

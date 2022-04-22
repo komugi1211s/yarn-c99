@@ -4,7 +4,7 @@
 ifeq ($(OS), Windows_NT)
 	CC = cl.exe /Zi /I"../src/"
 else
-	CC = clang -g -I../src/
+	CC = clang -fsanitize=undefined -Wall --pedantic -g -I../src/
 endif
 
 test:

@@ -109,7 +109,6 @@ void yarn_handle_line(yarn_dialogue *dialogue, yarn_line *line) {
 }
 
 void yarn_handle_option(yarn_dialogue *dialogue, yarn_option *options, int option_count) {
-    int max_option_id = -1;
     for (int o = 0; o < option_count; ++o) {
         yarn_option *opt = &options[o];
         /* create displayable line (performs substitution of {0}, {1}...) */
