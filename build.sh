@@ -13,4 +13,4 @@ else
 fi
 
 ctags ./src/yarn_c99.h
-clang $CFLAGS -std=c99 -Wall --pedantic -o $EXEC_FILE_NAME src/main.c -fno-caret-diagnostics
+clang $CFLAGS -std=c99 -Wall -o $EXEC_FILE_NAME src/main.c -fno-caret-diagnostics

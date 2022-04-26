@@ -18,11 +18,13 @@
 #include "yarn_spinner.pb-c.c"
 
 #define YARN_C99_IMPLEMENTATION
+#define YARN_PARSER_IMPLEMENTATION
 #else
 #include <stdlib.h>
 #include <stdio.h>
 #endif
 #include "yarn_c99.h"
+#include "yarn_parser.h"
 
 /*
  ==========================================
@@ -42,7 +44,18 @@ static void load_string_table(yarn_string_table *strtable, char *csv_name);
   Main function
  ==========================================
  */
-int main(int argc, char **argv) {
+
+void parser_main(int argc, char **argv) {
+    yarn_compilation_job *job = yarn_create_compilation_job();
+    yarn_add_script(job, (argc > 1) ? argv[1] : "./testing.yarn");
+
+    yarn_program program = yarn_compile(job);
+    YARN_UNUSED(program);
+
+    yarn_destroy_compilation_job(job);
+}
+
+void dialogue_main(int argc, char **argv) {
     yarn_variable_storage storage;
     yarn_string_table *string_table;
     yarn_dialogue     *dialogue;
@@ -80,6 +93,12 @@ int main(int argc, char **argv) {
     yarn_destroy_dialogue(dialogue);
     yarn_destroy_string_table(string_table);
     yarn_destroy_default_storage(storage);
+}
+
+int main(int argc, char **argv) {
+    parser_main(argc, argv);
+    dialogue_main(argc, argv);
+
     return 0;
 }
 /*
