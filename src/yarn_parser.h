@@ -5,6 +5,7 @@
 
 typedef struct yarn_program yarn_program;
 struct yarn_program {
+    int a;
 };
 
 typedef struct {
@@ -174,7 +175,7 @@ typedef struct {
 } yarn__ast;
 
 typedef struct {
-    int i;
+    yarn__lexer lexer;
 } yarn__parser;
 
 typedef struct {
@@ -574,6 +575,8 @@ static int yarn__lex(yarn__compiler *compiler, yarn__lexer *lexer) {
         {
             if (yarn__lexpeek(lexer, 0) == '-' && yarn__lexpeek(lexer, 1) == '-') {
                 lexer->cursor += 2;
+                lexer->mode = YARN_LEXMODE_BODY_TEXT;
+
                 return YARN_TOK_NODE_BEGIN;
             } else if (yarn__lexpeek(lexer, 0) == '>') {
                 yarn__lexadvance(lexer);
@@ -615,28 +618,28 @@ static int yarn__lex(yarn__compiler *compiler, yarn__lexer *lexer) {
 }
 
 static int yarn__parse(yarn__compiler *compiler, yarn_source source) {
-    yarn__lexer  lexer  = {0};
     yarn__parser parser = {0};
-    lexer.source = source;
+    parser.lexer.source = source;
 
-    yarn__lexclear(&lexer);
-    printf("Lexing %s\n", lexer.source.filename);
+    yarn__lexclear(&parser.lexer);
+    printf("Lexing %s\n", parser.lexer.source.filename);
 
     while(1) {
-        int token = yarn__lex(compiler, &lexer);
+        int token = yarn__lex(compiler, &parser.lexer);
         printf("Token: %d\n", token);
 
-        if (token == YARN_TOK_TEXT && lexer.str_length > 0) {
-            printf("Ident: %.*s\n", lexer.str_length, lexer.string);
+        if (token == YARN_TOK_TEXT && parser.lexer.str_length > 0) {
+            printf("Ident: %.*s\n", parser.lexer.str_length, parser.lexer.string);
         }
         if (token == YARN_TOK_NUMBER) {
-            printf("Number: %f\n", lexer.number);
+            printf("Number: %f\n", parser.lexer.number);
         }
 
         if (token == YARN_TOK_INVALID) {
             break;
         }
     }
+    return 0;
 }
 
 yarn_program yarn_compile(yarn_compilation_job *job) {

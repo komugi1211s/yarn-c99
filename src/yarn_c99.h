@@ -44,8 +44,7 @@ info:
 #if !defined(YARN_C99_INCLUDE)
 #define YARN_C99_INCLUDE
 
-#include <stddef.h>
-#include <stdint.h>
+#include "yarn_c99_common.h"
 
 /*
  * TODO:
@@ -150,94 +149,6 @@ struct yarn_value {
     } values;
 };
 
-/* =========================================
- * Hashmap.
- * Unlike dynamic array above, this one is also usable in user space.
- *
- * TODO: IT IS NOT TYPESAFE!!!!!!!!!!!!!!!!!!!:
- *   kvcreate takes type to it's first argument so it SEEMS like it is typesafe,
- *   but it's not. it does not store the information. it's misleading.
- *   it is actually storing the SIZE of the type. more on that below.
- * 
- * overview of how it's implemented:
- *   linear-probing, djb2 hashing.
- *   only supports char* as key, and key will be cloned on push.
- * 
- *   internal data is stored in char* buffer.
- *   like the diagram shown below;
- *
- * |================= entire buffer ==================|
- * [header-data|actual value][header-data|actual value]
- * |===== one "chunk"  =====|
- *
- * with map->element_size being set to the size of actual value.
- * on kvpush, it will take the size of passed value, and check against the map it's being inserted to,
- * and fires assertion error if does not.
- *
- * TODO: @testing -- this works, but complete and thorough test must be done.
- *
- * create hashmap with:
- *  map = yarn_kvcreate(element, capacity);
- *
- *  then, operate with:
- *    yarn_kvpush(&map, "hello", value);
- *    yarn_kvget(&map, "hello", &value); // will write into value
- *    yarn_kvhas(&map, "hello"); // returns 1 on true, 0 on false
- *    yarn_kvdelete(&map, "hello");
- *
- *    char *key;
- *    value value;
- *    yarn_kvforeach(&map, &key, &value) {
- *      // do whatever with value.
- *      // do not modify map while you're in foreach loop. do not free key.
- *      // foreach is unordered.
- *    }
- *
- *  once you're done:
- *    yarn_kvdestroy(&map); // every value stored inside will be unreachable.
- */
-
-typedef struct {
-    uint32_t hash;
-    size_t   keylen;
-    char    *key;
-} yarn_kvpair_header;
-
-typedef struct {
-    char   *entries;
-    size_t used;
-    size_t capacity;
-    size_t element_size; /* size of the actual value it's made for, not the size of chunk */
-} yarn_kvmap;
-
-#define yarn_kvcreate(element, caps) \
-    yarn__kvmap_create(sizeof(element), (caps))
-
-#define yarn_kvdestroy(map) \
-    yarn__kvmap_destroy((map))
-
-#define yarn_kvpush(map, key, value) \
-    yarn__kvmap_pushsize((map), (key), &(value), sizeof(value))
-
-#define yarn_kvget(map, key, value_ptr) \
-    yarn__kvmap_get((map), (key), (value_ptr), ((value_ptr) ? sizeof(*value_ptr) : 0))
-
-#define yarn_kvhas(map, key) \
-    (yarn__kvmap_get((map), (key), 0, 0) != -1)
-
-#define yarn_kvdelete(map, key) \
-    yarn__kvmap_delete((map), (key))
-
-#define yarn_kviternext(map, key_ptr, value_ptr, at)\
-    yarn__kvmap_iternext((map),(key_ptr),(value_ptr),((value_ptr)?sizeof(*value_ptr):0), at)
-
-/* TODO: super confusing and complex. fix it */
-#define yarn_kvforeach(map, key_ptr, value_ptr) \
-    for(int kv_iter = yarn_kviternext((map), (key_ptr), (value_ptr), 0); \
-        kv_iter != -1; \
-        kv_iter = yarn_kviternext((map), (key_ptr), (value_ptr), kv_iter))\
-        if (kv_iter == -1) { break; } else
-
 /* =============================================
  * quick and dirty type-safe dynamic array
  */
@@ -250,34 +161,6 @@ typedef struct {
 
 /* macro for push/pop/create/destroy is inside implementation block below. */
 
-/* =============================================
- * Yarn allocator:
- *   Arena based allocator that has the same memory lifetime.
- *   frees everything at once.
- *   every pointer that allocates off of this will never be invalidated.
- *
- *   internally it allocates the chain of allocator chunk to achieve parsistence of memory.
- *   with (used = 0, caps = 0, buffer = 0) being the sentinel node.
- *
- *   every allocator chunk will be pushed inside the doubly linked list.
- */
-
-
-typedef struct yarn_allocator_chunk yarn_allocator_chunk;
-
-struct yarn_allocator_chunk {
-    size_t used;
-    size_t capacity;
-    char   *buffer;
-
-    yarn_allocator_chunk *prev;
-    yarn_allocator_chunk *next;
-};
-
-typedef struct {
-    yarn_allocator_chunk *sentinel;
-    size_t next_caps;
-} yarn_allocator;
 
 /* =============================================
  * Default Variable Storage:
@@ -516,10 +399,6 @@ YARN_C99_DEF void  yarn_destroy_displayable_line(char *line);
 YARN_C99_DEF yarn_function_entry  yarn_get_function_with_name(yarn_dialogue *dialogue, char *funcname);
 YARN_C99_DEF int                  yarn_load_functions(yarn_dialogue *dialogue, yarn_func_reg *functions);
 
-/* allocator related stuff. */
-YARN_C99_DEF void *yarn_allocate(yarn_allocator *allocator, size_t size);
-YARN_C99_DEF void  yarn_clear_allocator(yarn_allocator *allocator);
-
 /*
  * ====================================================
  * Internals
@@ -548,26 +427,6 @@ YARN_C99_DEF yarn_allocator_chunk *yarn__create_new_chunk(size_t size);
 
 /* tries to extend dynamic array. */
 YARN_C99_DEF int yarn__maybe_extend_dyn_array(void **ptr, size_t elem_size, size_t used, size_t *caps);
-
-/* hashmap API. */
-YARN_C99_DEF yarn_kvmap yarn__kvmap_create(size_t elem_size, size_t caps); /* returns newly created map with given capacity and element size. */
-YARN_C99_DEF void yarn__kvmap_destroy(yarn_kvmap *map);                    /* frees entire map. */
-
-/* pushes element into map. element_size must match with map->impl->element_size. */
-YARN_C99_DEF int yarn__kvmap_pushsize(yarn_kvmap *map, const char *key, void *value, size_t element_size); 
-
-/* get element from map, and write into value if given valid pointer. returns -1 if does not exist. */
-YARN_C99_DEF int yarn__kvmap_get(yarn_kvmap *map, const char *key, void *value, size_t element_size);
-
-/* delete element from map, and rearrange. */
-YARN_C99_DEF int yarn__kvmap_delete(yarn_kvmap *map, const char *key);
-
-/* recreate the whole map if the current map's used up space meets certain threshold. */
-YARN_C99_DEF int yarn__kvmap_maybe_rehash(yarn_kvmap *map);
-
-/* checks hashmap entry specified by at, and writes key/value into pointers.
- * returns at + 1 if it can be continued, -1 otherwise. */
-YARN_C99_DEF int yarn__kvmap_iternext(yarn_kvmap *map, char **key, void *value, size_t element_size, int at);
 
 /* allocates new string with substituted value for {0}, {1}, {2}... format. */
 YARN_C99_DEF char *yarn__substitute_string(char *format, char **substs, int n_substs);
