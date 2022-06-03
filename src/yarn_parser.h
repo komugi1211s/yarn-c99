@@ -5,8 +5,25 @@
 
 typedef struct yarn_program yarn_program;
 struct yarn_program {
-    int success;
 };
+
+typedef struct {
+    int opcode;
+    int operand;
+} yarn_instruction;
+
+typedef struct {
+    char *tag;
+} yarn_tag;
+
+typedef struct {
+    char *node_name;
+    int               n_instructions;
+    yarn_instruction *instructions;
+
+    int       n_tags;
+    yarn_tag *tags;
+} yarn_node;
 
 typedef struct {
     char  *memory;
@@ -118,6 +135,14 @@ int yarn_add_script(yarn_compilation_job *job, const char *filename) {
  * Internals.
  * ================================================= */
 
+static inline int yarn__isdigit(char c) {
+    if ('0' <= c && c <= '9') {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
 enum {
     YARN_LEXMODE_HEADER     = 0,
     YARN_LEXMODE_BODY_TEXT  = 1,
@@ -135,20 +160,28 @@ typedef struct {
     int grapheme_column; /* For UTF-8. */
 
     char   *string;      /* Could be an ident */
-    int    str_length;
+    int    str_length;   /* string is not allocated, but instead it points somewhere inside the source. this specifies the length of the string. -- NOTE: str_length is a length by BYTES. not GRAPHEME. */
     float  number;
     int    boolean;
 
     yarn_source source;
 } yarn__lexer;
 
-static inline int yarn__isdigit(char c) {
-    if ('0' <= c && c <= '9') {
-        return 1;
-    } else {
-        return 0;
-    }
-}
+typedef struct {
+    int type;
+    int line;
+    int grapheme_column;
+} yarn__ast;
+
+typedef struct {
+    int i;
+} yarn__parser;
+
+typedef struct {
+    yarn_allocator allocator;
+    yarn__ast      *nodes;
+} yarn__compiler;
+
 
 static void yarn__lexprep(yarn__lexer *l) {
     l->prev_cursor = l->cursor;
@@ -175,29 +208,172 @@ static char yarn__lexadvance(yarn__lexer *l) {
     return l->source.memory[l->cursor++];
 }
 
+/* standard invalid character for utf8 */
+const unsigned int YARN_UTF8_REPLACEMENT_CHARACTER = 0xFFFD;
+
+static unsigned int yarn__lexadvance_cp(yarn__lexer *l, int *length) {
+    assert(length);
+    unsigned char a = (unsigned char)yarn__lexadvance(l);
+
+    /* Basic ascii -- nothing weird about this */
+    if (a <= 0x7f) {
+        *length = 1;
+        return (unsigned int) a;
+    }
+
+    /*
+     * first byte is more than 0xf4 ( maximum valid utf-8 sequence )
+     * not a valid data sequence to begin with.
+     *
+     * TODO: think of a way to express that this is not a data you want to continue parsing.
+     * */
+    if (a > 0xf4) {
+        goto yarn__found_invalid_sequence;
+    }
+
+    if ((a & 0xe0) == 0xc0) {
+        /*
+         * 2 byte sequence:
+         * bin - 0b110yyyyx | 0b10xxxxxx
+         *
+         * minimum:
+         *     hex - 0xc0       | 0x80
+         *     bin - 0b11000000 | 0b10000000
+         *
+         * maximum:
+         *     hex - 0xdf       | 0xbf
+         *     bin - 0b11011111 | 0b10111111
+         */
+        *length = 2;
+
+        unsigned char b = (unsigned char)yarn__lexadvance(l);
+        if ((b & 0xc0) != 0x80) {
+            /* OUTSIDE OF RANGE (b < 0x80 or 0xbf < b) */
+            goto yarn__found_invalid_sequence;
+        }
+
+        return (
+          ((a & ~0xc0) << 6) |
+          ((b & ~0x80) << 0)
+        );
+    } else if ((a & 0xf0) == 0xe0) {
+        /*
+         * 3 byte sequence:
+         * bin - 0b1110yyyy | 0b10yxxxxx | 0b10xxxxxx
+         *
+         * special invalid:
+         *      SURROGATE PAIR:
+         *           0xED       | < 0xA0     | whatever
+         *
+         *      REDUNDANT ENCODING:
+         *           0xE0       | 0x80~0x9F  | whatever
+         *
+         * minimum:
+         *     hex - 0xe0       | 0x80       | 0x80
+         *     bin - 0b11100000 | 0b10000000 | 0b10000000
+         *
+         * maximum:
+         *     hex - 0xef       | 0xbf       | 0xbf
+         *     bin - 0b11101111 | 0b10111111 | 0b10111111
+         */
+        *length = 3;
+
+        unsigned char b = (unsigned char)yarn__lexadvance(l);
+        unsigned char c = (unsigned char)yarn__lexadvance(l);
+
+        if (a == 0xe0 && (0x80 <= b && b <= 0x9f)) {
+            /* REDUNDANT ENCODING */
+            goto yarn__found_invalid_sequence;
+        }
+
+        if (a == 0xED && (b <= 0xA0)) {
+            /* SURROGATE PAIR */
+            goto yarn__found_invalid_sequence;
+        }
+
+        if ((b & 0xc0) != 0x80 || (c & 0xc0) != 0x80) {
+            /* OUTSIDE OF RANGE (b, c < 0x80 or 0xbf < b, c) */
+            goto yarn__found_invalid_sequence;
+        }
+
+        return (
+          ((a & ~0xe0) << 12) |
+          ((b & ~0x80) << 6)  |
+          ((c & ~0x80) << 0)
+        );
+    } else if ((a & 0xf4) == 0xf0) {
+        /*
+         * 3 byte sequence:
+         * bin - 0b1110yyyy | 0b10yxxxxx | 0b10xxxxxx | 0b10xxxxxx
+         *
+         * special invalid:
+         *      REDUNDANT ENCODING:
+         *           0xF0       | 0x80~0x8F  | whatever   | whatever
+         *
+         *      OUT_OF_RANGE_UNICODE:
+         *           0xF4       | 0x90 ~     | whatever   | whatever
+         *
+         * minimum:
+         *     hex - 0xe0       | 0x80       | 0x80       | 0x80
+         *     bin - 0b11100000 | 0b10000000 | 0b10000000 | 0b10000000
+         *
+         * maximum:
+         *     hex - 0xef       | 0xbf       | 0xbf       | 0xbf
+         *     bin - 0b11101111 | 0b10111111 | 0b10111111 | 0b10111111
+         */
+        *length = 4;
+
+        unsigned char b = (unsigned char)yarn__lexadvance(l);
+        unsigned char c = (unsigned char)yarn__lexadvance(l);
+        unsigned char d = (unsigned char)yarn__lexadvance(l);
+
+        if ((a == 0xf0) && (0x80 <= b && b <= 0x8f)) {
+            /* REDUNDANT ENCODING */
+            goto yarn__found_invalid_sequence;
+        }
+        if ((a == 0xf4) && (0x90 < b)) {
+            /* OUT_OF_RANGE_UNICODE */
+            goto yarn__found_invalid_sequence;
+        }
+
+        if ((b & 0xc0) != 0x80 || (c & 0xc0) != 0x80 || (d & 0xc0) != 0x80) {
+            /* OUTSIDE OF RANGE (b, c, d < 0x80 or 0xbf < b, c, d) */
+            goto yarn__found_invalid_sequence;
+        }
+
+        return (
+          ((a & ~0xf0) << 18) |
+          ((b & ~0x80) << 12) |
+          ((c & ~0x80) << 6)  |
+          ((d & ~0x80) << 0)
+        );
+    }
+
+yarn__found_invalid_sequence:
+    return YARN_UTF8_REPLACEMENT_CHARACTER;
+}
+
+
 static char yarn__lexpeek(yarn__lexer *l, int shift) {
     if ((l->cursor + shift) >= l->source.length) return 0;
     if ((l->cursor + shift) < 0)                 return 0;
     return l->source.memory[l->cursor + shift];
 }
 
-typedef struct {
-    int type;
-    int line;
-    int grapheme_column;
-} yarn__ast;
 
-typedef struct {
-    yarn_allocator allocator;
-    yarn__ast      *nodes;
-} yarn__compiler;
+static int yarn__lexident(yarn__lexer *l) { /* Sets string member inside lexer. */
+    /* Begins after consumed one character, so I have to advance by one */
+    int length     = 1;
+    /* TODO: endianness */
+    unsigned int character = yarn__lexadvance_cp(l, &length);
+    if (character == YARN_UTF8_REPLACEMENT_CHARACTER) {
+        return 0;
+    }
 
-static int yarn__parse_ident(yarn__lexer *l) {
-    l->cursor -= 1;
     return 0;
 }
 
-static int yarn__parse_digit(yarn__lexer *l) { /* Sets number member inside lexer. */
+static int yarn__lexdigit(yarn__lexer *l) { /* Sets number member inside lexer. */
     /* Begins after consumed one character, so I have to rollback once */
     l->cursor -= 1;
 
@@ -351,7 +527,7 @@ static int yarn__lex(yarn__compiler *compiler, yarn__lexer *lexer) {
             return YARN_TOK_NEWLINE;
         } break;
 
-        case ' ':  return YARN_TOK_WHITESPACE; break; /* TODO: indentation */
+        case ' ': return YARN_TOK_WHITESPACE;  break; /* TODO: indentation */
         case ':': return YARN_TOK_COLON;       break;
         case '#': return YARN_TOK_HASHTAG;     break;
 
@@ -426,11 +602,11 @@ static int yarn__lex(yarn__compiler *compiler, yarn__lexer *lexer) {
         default:
         {
             if (yarn__isdigit(c)) {
-                if (yarn__parse_digit(lexer)) {
+                if (yarn__lexdigit(lexer)) {
                     return YARN_TOK_NUMBER;
                 }
             } else {
-                return yarn__parse_ident(lexer);
+                return yarn__lexident(lexer);
             }
         } break;
     }
@@ -439,12 +615,13 @@ static int yarn__lex(yarn__compiler *compiler, yarn__lexer *lexer) {
 }
 
 static int yarn__parse(yarn__compiler *compiler, yarn_source source) {
-    yarn__lexer lexer = {0};
+    yarn__lexer  lexer  = {0};
+    yarn__parser parser = {0};
     lexer.source = source;
 
     yarn__lexclear(&lexer);
-
     printf("Lexing %s\n", lexer.source.filename);
+
     while(1) {
         int token = yarn__lex(compiler, &lexer);
         printf("Token: %d\n", token);
@@ -464,7 +641,7 @@ static int yarn__parse(yarn__compiler *compiler, yarn_source source) {
 
 yarn_program yarn_compile(yarn_compilation_job *job) {
     yarn__compiler compiler = {0};
-    yarn_program program = {0};
+    yarn_program   program = {0};
     compiler.allocator = yarn_create_allocator(8 * 1024);
 
     for (int i = 0; i < job->sources.used; ++i) {
